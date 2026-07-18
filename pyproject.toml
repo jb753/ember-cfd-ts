@@ -1,0 +1,52 @@
+[project]
+name = "ember-cfd-ts"
+dynamic = ["version"]
+description = "Turbostream 3 (TS3) file-format plugin for EMBER CFD"
+readme = "README.md"
+authors = [
+    { name = "James Brind", email = "jb753@cam.ac.uk" }
+]
+license = "GPL-3.0-or-later"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+# Follows SPEC 0's Python support window: https://scientific-python.org/specs/spec-0000/
+requires-python = ">=3.12"
+dependencies = [
+    "ember-cfd",
+    "h5py~=3.16.0",
+    "numpy~=2.5.0",
+    "pyyaml~=6.0.3",
+]
+
+[project.urls]
+Homepage = "https://ember-cfd.org"
+Documentation = "https://ember-cfd.org"
+Source = "https://github.com/jb753/ember-cfd-ts"
+
+[tool.setuptools.packages.find]
+# PEP 420 namespace: ship only ember/plugins/ts, letting `ember` and
+# `ember.plugins` resolve as namespaces shared with the core ember install.
+where = ["src"]
+namespaces = true
+
+[tool.uv]
+managed = true
+
+[tool.ruff.lint]
+ignore = ["E741"]  # match core ember
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "error",
+]
+
+[build-system]
+requires = ["setuptools>=77,<90", "setuptools-scm>=8", "wheel>=0.40"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+version_file = "src/ember/plugins/ts/_version.py"

@@ -1,0 +1,12 @@
+# setuptools-scm generated
+src/ember/plugins/ts/_version.py
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.venv/
