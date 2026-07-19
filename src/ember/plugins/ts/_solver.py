@@ -170,10 +170,11 @@ def _execute(ts3_config):
     try:
         if not os.path.exists(ts3_config.environment_script):
             raise Exception(
-                f"""Could not locate TS3 env script {ts3_config.environment_script}
-Are you on a HPC compute node gpu-q-* (not a login node)?
-If you have recently been added to the turbostream user group, log out
-and then back in to refresh your access permissions.
+                f"""Could not locate the TS3 environment script:
+    {ts3_config.environment_script}
+Set `environment_script` to the shell script that sets up the Turbostream
+runtime environment. On a cluster, check that you are on a node with the
+solver installed and that you have access to the Turbostream installation.
 """
             )
 
@@ -228,14 +229,14 @@ and then back in to refresh your access permissions.
 
             proc.wait()
 
-            # If we have an error code, prind debugging info
+            # If we have an error code, print debugging info
             if proc.returncode:
                 raise Exception(
                     f"""TS3 failed, exit code {proc.returncode}
 COMMAND: {cmd_str}
 STDERR: {proc.stderr.read().decode(sys.getfilesystemencoding()).strip()}
 
-Are you on a HPC compute node, i.e. gpu-q-x not login-q-x?"""
+Check that Turbostream is available and runnable on this node."""
                 ) from None
 
         # Delete extraneous files
