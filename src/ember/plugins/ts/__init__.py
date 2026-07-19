@@ -2,12 +2,14 @@
 
 This package plugs into the PEP 420 namespace ``ember.plugins.ts`` and provides
 read/write access to the HDF5-based TS3 solver format, probe output, and TS3
-convergence logs. Core ``ember`` carries no TS3 knowledge; install this plugin
-(``ember-cfd-ts``) to use these entry points.
+convergence logs, plus :class:`TS3Solver` to run Turbostream 3 through the
+uniform :class:`ember.solver.BaseSolver` interface. Core ``ember`` carries no
+TS3 knowledge; install this plugin (``ember-cfd-ts``) to use these entry points.
 
 The implementation lives in the private submodules ``_io`` (grid/probe file
-I/O, depends on ``Grid``/``Block``/``patch``) and ``_convergence`` (log parsing,
-depends on ``ConvergenceHistory``); this module re-exports the supported API.
+I/O, depends on ``Grid``/``Block``/``patch``), ``_convergence`` (log parsing,
+depends on ``ConvergenceHistory``), and ``_solver`` (the run driver); this
+module re-exports the supported API.
 """
 
 from ember.plugins.ts._io import (
@@ -23,6 +25,7 @@ from ember.plugins.ts._io import (
     KIND_BY_PATCH,
 )
 from ember.plugins.ts._convergence import parse_ts3_log
+from ember.plugins.ts._solver import TS3Solver
 
 __all__ = [
     "read_ts3",
@@ -36,6 +39,7 @@ __all__ = [
     "PATCH_BY_KIND",
     "KIND_BY_PATCH",
     "parse_ts3_log",
+    "TS3Solver",
 ]
 
 try:
