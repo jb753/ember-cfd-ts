@@ -16,9 +16,18 @@ from ember.plugins.ts._convergence import parse_ts3_log
 
 logger = logging.getLogger("ember")
 
-# Typed config fields that map to TS3 application/block variables of the same
-# name, forwarded via writer.set_av / writer.set_bv. Used both to forward the
-# values and to detect overlap with the raw av/bv override dicts.
+# TS3 application variables that TS3Solver exposes as a typed field of the same
+# name. This is a deliberately hand-maintained *mirror* of a subset of the
+# dataclass fields below: every entry must be (a) an actual TS3Solver field, so
+# `getattr(cfg, name)` in _write_input resolves, and (b) a name the writer
+# accepts as an application variable. It duplicates those field names on
+# purpose -- keeping the forwarding surface greppable in one place rather than
+# deriving it from `fields(TS3Solver)` via metadata -- so the standing cost is
+# that adding a typed av field means adding its name here too (and a typo here
+# would surface as a getattr/writer error). Consumed by _write_input (to forward
+# the values via writer.set_av) and by _check_overlap (to reject raw av
+# overrides that collide with a non-default typed field). _BV_FIELDS is the same
+# idea for block variables.
 _AV_FIELDS = frozenset(
     {
         "cfl",
@@ -32,6 +41,8 @@ _AV_FIELDS = frozenset(
         "sfin",
     }
 )
+# Block variables with a typed field (see the _AV_FIELDS note above); currently
+# just the multigrid factor. Forwarded via writer.set_bv per block.
 _BV_FIELDS = frozenset({"fmgrid"})
 
 
