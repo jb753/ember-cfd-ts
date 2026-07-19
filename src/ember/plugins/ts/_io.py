@@ -311,7 +311,7 @@ def _unflip(x, shape=None):
         return np.swapaxes(np.reshape(x, (nk, nj, ni)), 0, 2)
 
 
-def scalar(x):
+def _scalar(x):
     """Extract scalar value from HDF5 dataset."""
     return np.squeeze(x).item()
 
@@ -391,7 +391,7 @@ def read_conserved(grid, fname):
         diverged solution (non-positive or non-finite density, etc.).
     """
     with h5py.File(fname, "r") as f:
-        nb = int(scalar(f.attrs["nb"]))
+        nb = int(_scalar(f.attrs["nb"]))
         if len(grid) != nb:
             raise ValueError(f"Grid has {len(grid)} blocks but file {fname} has {nb}")
 
@@ -452,7 +452,7 @@ def read_mu_turb(grid, fname):
         If the file does not contain ``trans_dyn_vis_bp``.
     """
     with h5py.File(fname, "r") as f:
-        nb = int(scalar(f.attrs["nb"]))
+        nb = int(_scalar(f.attrs["nb"]))
         if len(grid) != nb:
             raise ValueError(f"Grid has {len(grid)} blocks but file {fname} has {nb}")
 
@@ -487,8 +487,8 @@ def read_ts3(fname):
         # omits them (they default to NaN, which write_av skips), so their
         # absence is the "no fluid" signal: build a fluid only when present.
         if all(f"{k}_av" in f for k in ("cp", "ga", "viscosity", "prandtl")):
-            cp, ga, mu = (scalar(f[f"{k}_av"]) for k in ("cp", "ga", "viscosity"))
-            Pr = scalar(f["prandtl_av"])
+            cp, ga, mu = (_scalar(f[f"{k}_av"]) for k in ("cp", "ga", "viscosity"))
+            Pr = _scalar(f["prandtl_av"])
             logger.info(
                 f"Fluid properties: cp = {cp:.0f}, ga = {ga:.3f}, "
                 f"mu = {mu:.3g}, Pr = {Pr:.3f}"
@@ -503,7 +503,7 @@ def read_ts3(fname):
             fluid = None
 
         # Get number of blocks from root group
-        nb = int(scalar(f.attrs["nb"]))
+        nb = int(_scalar(f.attrs["nb"]))
         logger.info(f"Number of blocks: {nb}")
 
         # Loop over blocks
@@ -512,12 +512,12 @@ def read_ts3(fname):
             b = f[f"block{ib}"]
 
             # Shape from attributes
-            ni, nj, nk = [int(scalar(b.attrs[k])) for k in ("ni", "nj", "nk")]
-            npatch = int(scalar(b.attrs["np"]))
+            ni, nj, nk = [int(_scalar(b.attrs[k])) for k in ("ni", "nj", "nk")]
+            npatch = int(_scalar(b.attrs["np"]))
 
             # Now read the block variables we need
-            rpm = scalar(b["rpm_bv"])
-            Nb = int(scalar(b["nblade_bv"]))
+            rpm = _scalar(b["rpm_bv"])
+            Nb = int(_scalar(b["nblade_bv"]))
             logger.info(
                 f"bid {ib}: shape={ni}x{nj}x{nk}, rpm={rpm:.0f}, Nb={Nb:.0f}, np={npatch}"
             )
