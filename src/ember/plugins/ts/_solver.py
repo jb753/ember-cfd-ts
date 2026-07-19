@@ -365,15 +365,6 @@ def _run(grid, ts3_config):
     _execute(ts3_config)
     _read_hdf5(grid, ts3_config)
 
-    # Probe post-run caching disabled: the read functions live in the plugin's
-    # _io. TODO: re-enable once probe_meta.yaml is written from an ember.grid,
-    # then cache via ember.plugins.ts.read_probe_dat.
-    # if ts3_config.nstep_save_probe:
-    #     probe_fnames = list(read_probe_metadata(ts3_config.workdir).keys())
-    #     # Use multiprocessing to read and save compressed probes in parallel
-    #     with multiprocessing.Pool(processes=8) as pool:
-    #         pool.map(read_probe_dat, probe_fnames)
-
 
 # Live-divergence detection during a run reads only these two patterns;
 # full log parsing for the convergence history lives in ember.plugins.ts.
