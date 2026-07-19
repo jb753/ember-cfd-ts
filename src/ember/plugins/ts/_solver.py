@@ -134,10 +134,10 @@ class TS3Solver(BaseSolver):
         if not self.workdir.exists():
             self.workdir.mkdir(parents=True, exist_ok=True)
 
-        # Keep old log file if it exists (e.g. after a previous run).
+        # Archive any existing log so every run in this workdir keeps its own
+        # (e.g. one per full-multigrid level), rather than clobbering it.
+        _archive_log(self.workdir)
         log_path = os.path.join(self.workdir, "log.txt")
-        if os.path.exists(log_path):
-            os.rename(log_path, log_path.replace("log.txt", "log_old.txt"))
 
         _run(grid, self)
 
@@ -156,6 +156,30 @@ class TS3Solver(BaseSolver):
 # how often to poll the running solver for divergence, in seconds.
 _LOG_TIMEOUT_S = 60
 _POLL_INTERVAL_S = 10
+
+_re_log_index = re.compile(r"^log_(\d+)\.txt$")
+
+
+def _archive_log(workdir):
+    """Rename an existing ``log.txt`` to the next free ``log_NNN.txt``.
+
+    The live log must stay named ``log.txt`` -- both the ``mpirun ... > log.txt``
+    redirect and the live NaN poll (:func:`_check_nan`) hardcode it -- so instead
+    of writing per-run names directly we archive the *previous* run's log at the
+    start of each run. Successive runs in one workdir (e.g. the levels of a
+    full-multigrid startup) therefore each keep their own ``log_000.txt``,
+    ``log_001.txt``, ... A legacy ``log_old.txt`` is ignored by the numbering.
+    """
+    log_path = os.path.join(workdir, "log.txt")
+    if not os.path.exists(log_path):
+        return
+    indices = [
+        int(m.group(1))
+        for f in glob(os.path.join(workdir, "log_*.txt"))
+        if (m := _re_log_index.match(os.path.basename(f)))
+    ]
+    n = max(indices, default=-1) + 1
+    os.rename(log_path, os.path.join(workdir, f"log_{n:03d}.txt"))
 
 
 def _execute(ts3_config):
