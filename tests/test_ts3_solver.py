@@ -377,3 +377,44 @@ def test_run_diverged_solution_raises(tmp_path):
     with pytest.raises(DivergenceError):
         ts3_mod._run(_make_grid_with_inlet(), cfg)
     assert os.getcwd() == cwd_before
+
+
+def test_archive_log_increments_suffix(tmp_path):
+    """_archive_log renames log.txt to the next free log_NNN.txt, keeping all."""
+    log = tmp_path / "log.txt"
+
+    # No log present: no-op.
+    ts3_mod._archive_log(tmp_path)
+    assert not list(tmp_path.glob("log_*.txt"))
+
+    # First archive -> log_000.txt.
+    log.write_text("run 0")
+    ts3_mod._archive_log(tmp_path)
+    assert not log.exists()
+    assert (tmp_path / "log_000.txt").read_text() == "run 0"
+
+    # Second archive advances past the existing index -> log_001.txt.
+    log.write_text("run 1")
+    ts3_mod._archive_log(tmp_path)
+    assert (tmp_path / "log_001.txt").read_text() == "run 1"
+
+    # A legacy log_old.txt is ignored by the numbering.
+    (tmp_path / "log_old.txt").write_text("legacy")
+    log.write_text("run 2")
+    ts3_mod._archive_log(tmp_path)
+    assert (tmp_path / "log_002.txt").read_text() == "run 2"
+    assert (tmp_path / "log_old.txt").read_text() == "legacy"
+
+
+def test_run_keeps_a_log_per_run(tmp_path):
+    """run() archives the previous log, so two runs in one workdir keep both."""
+    grid = _make_grid_with_inlet()
+    cfg = TS3Solver()
+    cfg.environment_script = _write_mock_env(tmp_path, "happy")
+    cfg.workdir = tmp_path
+
+    cfg.run(grid)  # writes log.txt
+    cfg.run(grid)  # archives the previous log -> log_000.txt, writes a fresh log.txt
+
+    assert (tmp_path / "log.txt").exists()
+    assert (tmp_path / "log_000.txt").exists()
