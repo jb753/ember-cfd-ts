@@ -40,8 +40,14 @@ managed = true
 # Develop against the sibling ember working copy rather than the published
 # release: this plugin tracks core APIs (Grid alignment, Block/patch accessors)
 # ahead of what is on PyPI.
+#
+# `workspace = true` here relies on this package and `../ember` both being
+# uv workspace members -- true whenever this submodule is checked out under
+# the ember-paper superproject, which declares both as members in its root
+# pyproject.toml. This package has no standalone (non-workspace) uv project
+# of its own; building it outside that superproject is not supported.
 [tool.uv.sources]
-ember-cfd = { path = "../ember", editable = true }
+ember-cfd = { workspace = true }
 
 [dependency-groups]
 dev = [
