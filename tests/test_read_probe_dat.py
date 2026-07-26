@@ -126,6 +126,46 @@ def test_basic_dat_loading(tmp_path):
     assert np.abs(F.Vx[0, 0, 0] - expected["Vx"]) < 0.1
 
 
+def test_temperature_on_ts_datum(tmp_path):
+    """The recovered temperature must be the absolute one the file encodes.
+
+    Turbostream measures internal energy from T = 0, so a probe ``roe`` holding
+    ``u = cv * T`` must read back as exactly ``T``. Reading it through a fluid
+    on any other datum offsets the temperature by that datum, which is a silent
+    bias in every quantity derived from T.
+    """
+    shape = [4, 1]
+    nsteps = 1
+    bid, pid = 3, 1
+    cp, ga = 1005.0, 1.4
+    cv = cp / ga
+    T_known = 412.5
+
+    write_probe_meta(tmp_path, bid, pid, shape, cp=cp, ga=ga, nsteps=nsteps)
+    dat_file = tmp_path / f"output_probe_{bid}_{pid}.dat"
+
+    nspatial = int(np.prod(shape))
+    x = np.arange(nspatial, dtype=np.float32)
+    r = np.full(nspatial, 0.5, dtype=np.float32)
+    rt = np.zeros(nspatial, dtype=np.float32)
+    ro = np.full(nspatial, 1.2, dtype=np.float32)
+    # Velocities are zero so roe carries internal energy alone: any error in
+    # the datum shows up in T directly, with no kinetic term to hide behind.
+    rovx = np.zeros(nspatial, dtype=np.float32)
+    rovr = np.zeros(nspatial, dtype=np.float32)
+    rorvt = np.zeros(nspatial, dtype=np.float32)
+    roe = ro * cv * T_known
+
+    conserved = np.stack([x, r, rt, ro, rovx, rovr, rorvt, roe]).T
+    with open(dat_file, "w") as f:
+        f.write("x r rt ro rovx rovr rorvt roe\n")
+        np.savetxt(f, conserved, fmt="%.8e")
+
+    F, _ = read_probe_dat(str(dat_file))
+
+    np.testing.assert_allclose(F.T, T_known, rtol=1e-5)
+
+
 def test_cache_reuse(tmp_path):
     """Cache is created and reused; raw .dat deleted once old."""
     shape = [3, 3]
@@ -178,9 +218,14 @@ def test_fortran_order_reshape(tmp_path):
     assert np.all(F.rho > 0)
     assert np.abs(F.Vx[0, 0, 0, 0] - 10.0) < 0.1
 
-    # Internal energy positive everywhere
-    u = F.rhoe / F.rho - 0.5 * (F.Vx**2 + F.Vr**2 + F.Vt**2)
-    assert np.all(u > 0)
+    # Physically sensible state everywhere. Asserted on temperature, not on
+    # internal energy: u is measured from the block's datum (ember's default is
+    # T_dtm = 300 K), so u < 0 is perfectly legitimate for a ~290 K flow and
+    # only differences in u are meaningful. The old u > 0 assertion held only
+    # while the probe reader put the block on a near-zero datum, which biased
+    # every recovered temperature by 1 K.
+    assert np.all(F.T > 0)
+    assert np.all(F.P > 0)
 
 
 def test_skip_age_check(tmp_path):

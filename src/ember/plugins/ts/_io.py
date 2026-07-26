@@ -351,6 +351,68 @@ def _write_property(group, name, suffix, val, flat=False):
     group.create_dataset(key, data=val_out, dtype=dtype)
 
 
+# --- Turbostream thermodynamic datum ---------------------------------------
+#
+# Turbostream measures specific internal energy from a datum at T = 0, so
+# u = cv * T throughout its files, on both read and write. An ember grid may
+# carry any datum, so every crossing of the file boundary has to convert.
+#
+# This is deliberately *not* expressed as an ember Fluid datum, even though
+# Fluid.change_datum exists: ember's datum sets u = s = 0 simultaneously, and
+# entropy s = cp*ln(T/T_dtm) - R*ln(P/P_dtm) is singular at T_dtm = 0. No fluid
+# instance can sit on Turbostream's datum, so the conversion stays an explicit
+# u <-> T relation here.
+#
+# That relation is perfect-gas specific, and unavoidably so: the general offset
+# is u evaluated at T = 0, which a table-backed equation of state cannot supply.
+# A real-gas Turbostream would put its energy on the datum of its own property
+# tables -- a normal (P_dtm, T_dtm > 0) pair that *would* go through
+# Fluid.change_datum -- so the assumption is confined to _check_perfect_fluid
+# below rather than spread across the readers and the writer.
+_TS_T_DTM = 0.0
+
+
+def _check_perfect_fluid(fluid):
+    """Reject a fluid whose energy cannot be put on Turbostream's T = 0 datum.
+
+    Raises ``TypeError`` rather than ``ValueError`` deliberately: callers wrap
+    these conversions in ``except ValueError`` to detect an *unset* flow
+    variable (``Block.fluid`` itself raises ``ValueError`` when no fluid has
+    been set), and an unsupported equation of state must not be mistaken for
+    one of those and silently skipped.
+    """
+    if not isinstance(fluid, PerfectFluid):
+        raise TypeError(
+            "Turbostream's u = cv*T energy datum is only defined for a perfect "
+            f"gas, but this grid carries {type(fluid).__name__}. A real-gas "
+            "Turbostream would use its property tables' own datum, which is not "
+            "supported here."
+        )
+
+
+def _cv_Rgas_from_gas_properties(cp, gamma):
+    """Dimensional ``(cv, Rgas)`` from the gas properties a TS3 file carries."""
+    cv = cp / gamma
+    return cv, cp - cv
+
+
+def _P_T_from_ts_datum(rho, u, cv, Rgas):
+    """Dimensional ``(P, T)`` from density and internal energy on the TS datum.
+
+    The inverse of :func:`_roe_on_ts_datum`. Callers pass the result to
+    :meth:`~ember.block.Block.set_P_T`, which re-expresses the state on the
+    block's own datum; pressure and temperature are datum-free, so nothing
+    downstream needs to know where the energy came from.
+    """
+    T = u / cv + _TS_T_DTM
+    return rho * Rgas * T, T
+
+
+def _roe_on_ts_datum(rho, T, Vsq, cv):
+    """Total energy per unit volume on the TS datum, from dimensional state."""
+    return rho * (cv * (T - _TS_T_DTM) + 0.5 * Vsq)
+
+
 def read_conserved(grid, fname):
     """Read the conserved flow field from a TS3 file into an existing grid.
 
@@ -363,13 +425,14 @@ def read_conserved(grid, fname):
 
     Datum handling
     --------------
-    Turbostream stores total energy on its own thermodynamic datum (internal
-    energy near zero at ~1 K), whereas ``grid`` may carry a general datum. The
-    file's density and internal energy are therefore converted to dimensional
-    pressure and temperature using a throwaway fluid placed on the TS3 datum,
-    and stored via :meth:`~ember.block.Block.set_P_T`, which re-expresses the
-    state on each block's own (unchanged) datum. The throwaway fluid is built
-    with unity reference scales so the conversion is a direct dimensional one.
+    Turbostream stores total energy on its own thermodynamic datum, measuring
+    internal energy from ``T = 0`` so that ``u = cv * T``, whereas ``grid`` may
+    carry a general datum. The file's density and internal energy are therefore
+    converted to dimensional pressure and temperature by
+    :func:`_P_T_from_ts_datum` and stored via
+    :meth:`~ember.block.Block.set_P_T`, which re-expresses the state on each
+    block's own (unchanged) datum. Pressure and temperature are datum-free, so
+    the conversion is confined to that one call.
 
     Parameters
     ----------
@@ -405,12 +468,11 @@ def read_conserved(grid, fname):
             Vt = _unflip(b["rorvt_bp"]) / rho / block.r
             u = _unflip(b["roe_bp"]) / rho - 0.5 * (Vx**2 + Vr**2 + Vt**2)
 
-            # Turbostream measures internal energy from a datum at T = 0, where
-            # u = cv * T, so T = u / cv and P = rho * R * T. set_P_T then stores
-            # these on the block's own datum. The velocity and thermodynamic
-            # setters preserve each other, so order is free.
-            T = u / block.cv
-            P = rho * block.Rgas * T
+            # Convert off Turbostream's datum; set_P_T then stores the state on
+            # the block's own. The velocity and thermodynamic setters preserve
+            # each other, so order is free.
+            _check_perfect_fluid(block.fluid)
+            P, T = _P_T_from_ts_datum(rho, u, block.cv, block.Rgas)
             block.set_Vxrt(np.stack([Vx, Vr, Vt], axis=-1))
             block.set_P_T(P, T)
 
@@ -541,11 +603,10 @@ def read_ts3(fname):
             # The following bp are optional
 
             # Flow field. Requires a fluid; without one the file is geometry
-            # only, so skip. Turbostream measures internal energy from a datum
-            # at T = 0 (u = cv * T), so convert the file's conserved variables
-            # to dimensional velocity, P and T and store via set_Vxrt/set_P_T,
+            # only, so skip. The file's conserved variables are converted to
+            # dimensional velocity, P and T and stored via set_Vxrt/set_P_T,
             # which re-express the state on the block's own datum. This mirrors
-            # read_conserved and matches the u = cv * T convention used on write.
+            # read_conserved and matches the convention used on write.
             if fluid is not None:
                 block.set_fluid(fluid)
                 try:
@@ -554,12 +615,10 @@ def read_ts3(fname):
                     Vr = _unflip(b["rovr_bp"]) / rho
                     Vt = _unflip(b["rorvt_bp"]) / rho / r
                     u = _unflip(b["roe_bp"]) / rho - 0.5 * (Vx**2 + Vr**2 + Vt**2)
-                    # cv and Rgas from the file's gas properties; T = u / cv on
-                    # the u = cv * T datum, P = rho * Rgas * T.
-                    cv = cp / ga
-                    Rgas = cp - cv
-                    T = u / cv
-                    P = rho * Rgas * T
+                    # cv and Rgas come from the file's own gas properties, since
+                    # the block's fluid was only just built from them.
+                    cv, Rgas = _cv_Rgas_from_gas_properties(cp, ga)
+                    P, T = _P_T_from_ts_datum(rho, u, cv, Rgas)
                     block.set_Vxrt(np.stack([Vx, Vr, Vt], axis=-1))
                     block.set_P_T(P, T)
                 except KeyError:
@@ -924,15 +983,17 @@ class TS3Writer:
                             f"Block {bid}: Flow variable '{key}' is not set"
                         )
 
-            # Total energy is always written on Turbostream's datum, which
-            # measures internal energy from T = 0 (u = cv * T). Re-express it
-            # without touching the grid's own datum:
-            #   roe = rho * (cv * T + 0.5 * V^2)
-            # The block's velocity (rhoVx etc.) is read directly above, so a
-            # block with coordinates but no flow field simply omits roe.
+            # Total energy is always written on Turbostream's datum, re-expressed
+            # without touching the grid's own. The block's velocity (rhoVx etc.)
+            # is read directly above, so a block with coordinates but no flow
+            # field simply omits roe.
             try:
-                self.bp[bid]["roe"] = block.rho * (
-                    block.cv * block.T + 0.5 * block.V**2
+                # Inside the try so a block with no fluid at all still falls
+                # through to the unset-variable handling below; the check itself
+                # raises TypeError, so a real-gas fluid is not swallowed here.
+                _check_perfect_fluid(block.fluid)
+                self.bp[bid]["roe"] = _roe_on_ts_datum(
+                    block.rho, block.T, block.V**2, block.cv
                 )
             except ValueError:
                 if strict:
@@ -1417,9 +1478,20 @@ def _build_flowfield(conserved, cp, ga, mu, Omega):
     block.set_r(r)
     block.set_t(rt / r)
     # Pr does not affect any returned quantity and is absent from the sidecar.
-    # T_dtm=1.0 mirrors read_ts3 (TS3 sets internal energy datum near 1 K).
-    block.set_fluid(PerfectFluid(cp=cp, gamma=ga, mu=mu, Pr=1.0, T_dtm=1.0))
-    block.set_conserved(np.stack((ro, rovx, rovr, rorvt, roe), axis=-1))
+    block.set_fluid(PerfectFluid(cp=cp, gamma=ga, mu=mu, Pr=1.0))
+
+    # The probe file's roe is on Turbostream's datum, so it cannot be handed
+    # straight to set_conserved (which would read it on the block's own datum).
+    # Convert to P and T first, exactly as read_conserved and read_ts3 do. The
+    # previous approach -- building the fluid on T_dtm=1.0 and storing roe
+    # directly -- biased every recovered temperature by that 1 K, because the
+    # file's u is cv*T measured from zero, not from 1 K.
+    Vx, Vr, Vt = rovx / ro, rovr / ro, rorvt / (ro * r)
+    u = roe / ro - 0.5 * (Vx**2 + Vr**2 + Vt**2)
+    cv, Rgas = _cv_Rgas_from_gas_properties(cp, ga)
+    P, T = _P_T_from_ts_datum(ro, u, cv, Rgas)
+    block.set_Vxrt(np.stack([Vx, Vr, Vt], axis=-1))
+    block.set_P_T(P, T)
     block.set_Omega(Omega)
     return block
 

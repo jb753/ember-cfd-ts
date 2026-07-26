@@ -16,6 +16,7 @@ from ember.block import Block
 from ember.fluid import PerfectFluid
 from ember.grid import Grid
 import ember.plugins.ts as ts3
+import ember.plugins.ts._io as _io
 import ember.util as util
 
 
@@ -176,3 +177,49 @@ def test_read_mu_turb_block_count_mismatch(tmp_path):
 
     with pytest.raises(ValueError, match="blocks but file"):
         ts3.read_mu_turb(Grid([grid[0]]), fname)
+
+
+def test_datum_helpers_round_trip():
+    """The inbound and outbound TS datum conversions are exact inverses."""
+    cp, gamma = 1005.0, 1.4
+    cv, Rgas = _io._cv_Rgas_from_gas_properties(cp, gamma)
+
+    rho = np.array([1.2, 0.8, 2.0])
+    T = np.array([288.0, 450.0, 310.0])
+    Vsq = np.array([0.0, 1.0e4, 2.5e4])
+
+    roe = _io._roe_on_ts_datum(rho, T, Vsq, cv)
+    u = roe / rho - 0.5 * Vsq
+    P_back, T_back = _io._P_T_from_ts_datum(rho, u, cv, Rgas)
+
+    np.testing.assert_allclose(T_back, T, rtol=1e-12)
+    np.testing.assert_allclose(P_back, rho * Rgas * T, rtol=1e-12)
+
+
+def test_datum_helpers_use_absolute_temperature():
+    """Internal energy on the TS datum is cv*T measured from absolute zero.
+
+    Pins the convention itself rather than only its self-consistency: a
+    round-trip alone would still pass if both directions shared a wrong datum.
+    """
+    cv, _ = _io._cv_Rgas_from_gas_properties(1005.0, 1.4)
+    roe = _io._roe_on_ts_datum(np.float64(1.0), np.float64(400.0), np.float64(0.0), cv)
+    np.testing.assert_allclose(roe, cv * 400.0, rtol=1e-12)
+
+
+class _NotAPerfectGas:
+    """Stand-in for a future table-backed equation of state."""
+
+
+def test_real_gas_rejected_by_datum_conversion():
+    """A non-perfect fluid raises, rather than silently getting u = cv*T.
+
+    TypeError specifically: the writer wraps these conversions in
+    ``except ValueError`` to detect unset flow variables, so a ValueError here
+    would be swallowed and the block written with no energy at all.
+    """
+    with pytest.raises(TypeError, match="perfect gas"):
+        _io._check_perfect_fluid(_NotAPerfectGas())
+
+    # A real PerfectFluid passes, whatever datum it happens to be on.
+    _io._check_perfect_fluid(PerfectFluid(cp=1005.0, gamma=1.4, mu=1.8e-5, Pr=0.7))
