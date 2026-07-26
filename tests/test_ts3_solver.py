@@ -25,6 +25,7 @@ from ember.grid import Grid, DivergenceError
 from ember.patch import InletPatch, OutletPatch
 
 import ember.plugins.ts._solver as ts3_mod
+import ember.plugins.ts._log as ts_log
 from ember.plugins.ts import TS3Solver, parse_ts3_log, write_ts3
 
 _DATA = Path(__file__).parent / "data"
@@ -380,28 +381,28 @@ def test_run_diverged_solution_raises(tmp_path):
 
 
 def test_archive_log_increments_suffix(tmp_path):
-    """_archive_log renames log.txt to the next free log_NNN.txt, keeping all."""
+    """archive_log renames log.txt to the next free log_NNN.txt, keeping all."""
     log = tmp_path / "log.txt"
 
     # No log present: no-op.
-    ts3_mod._archive_log(tmp_path)
+    ts_log.archive_log(tmp_path)
     assert not list(tmp_path.glob("log_*.txt"))
 
     # First archive -> log_000.txt.
     log.write_text("run 0")
-    ts3_mod._archive_log(tmp_path)
+    ts_log.archive_log(tmp_path)
     assert not log.exists()
     assert (tmp_path / "log_000.txt").read_text() == "run 0"
 
     # Second archive advances past the existing index -> log_001.txt.
     log.write_text("run 1")
-    ts3_mod._archive_log(tmp_path)
+    ts_log.archive_log(tmp_path)
     assert (tmp_path / "log_001.txt").read_text() == "run 1"
 
     # A legacy log_old.txt is ignored by the numbering.
     (tmp_path / "log_old.txt").write_text("legacy")
     log.write_text("run 2")
-    ts3_mod._archive_log(tmp_path)
+    ts_log.archive_log(tmp_path)
     assert (tmp_path / "log_002.txt").read_text() == "run 2"
     assert (tmp_path / "log_old.txt").read_text() == "legacy"
 
