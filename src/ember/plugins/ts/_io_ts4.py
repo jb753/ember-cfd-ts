@@ -312,35 +312,18 @@ def write_throttle(ts4_config, grid, fname, workdir):
             "patches; the throttle configuration would be ambiguous."
         )
 
-    mass_target = []
-    throttle_kind = []
-    throttle_k0 = []
-    mdot_flag = False
-    # TS4 converges in fewer steps than TS3, so the implicit scheme needs a
-    # gentler gain than the TS3 value the patch carries.
-    fac_adjust = 0.5 if ts4_config.implicit_scheme else 1.0
-
-    for patch in outlets:
-        # Note the predicate: ember's OutletPatch always has a K_pid tuple
-        # (defaulting to zeros), so unlike turbigen's port there is no None to
-        # test against -- an unthrottled outlet is one with no mass-flow target.
-        if patch.mdot_target > 0:
-            mdot_flag = True
-            # TS4 targets the mass flow through one passage, not the annulus.
-            mass_target.append(float(patch.mdot_target) / float(patch.block.Nb))
-            throttle_kind.append(0)
-            # TS4 offers integral control only, so only the I gain carries over.
-            throttle_k0.append(float(patch.K_pid[1]) * fac_adjust)
-        else:
-            mass_target.append(0.0)
-            throttle_kind.append(1)
-            throttle_k0.append(0.0)
+    # ember's OutletPatch no longer offers a mass-flow PID throttle (dropped in
+    # favour of the non-reflecting condition, which only prescribes a fixed
+    # static pressure), so every outlet is unthrottled here.
+    mass_target = [0.0 for _ in outlets]
+    throttle_kind = [1 for _ in outlets]
+    throttle_k0 = [0.0 for _ in outlets]
 
     throttle_path = os.path.join(workdir, "throttle_config.ofp")
     if os.path.exists(throttle_path):
         os.remove(throttle_path)
 
-    if mdot_flag or ts4_config.area_avg_pout:
+    if ts4_config.area_avg_pout:
         write_ofp(
             throttle_path,
             {
@@ -352,7 +335,7 @@ def write_throttle(ts4_config, grid, fname, workdir):
             },
         )
 
-    return mdot_flag
+    return False
 
 
 def write_probes_ofp(workdir):

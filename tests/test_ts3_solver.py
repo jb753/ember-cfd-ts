@@ -35,7 +35,9 @@ def _make_solved_grid(T_dtm=300.0):
     """Single-block ember grid on a general datum with a known flow field."""
     shape = (3, 4, 5)
     block = Block(shape=shape)
-    xrt = ember.util.linmesh3([0.0, 1.0], [0.5, 1.5], [0.0, 0.2], shape)
+    # The inlet/outlet patches require the whole blade pitch: see
+    # ember.nonreflecting.NonReflectingPatch._calc_hilbert.
+    xrt = ember.util.linmesh3([0.0, 1.0], [0.5, 1.5], [0.0, 2 * np.pi], shape)
     block.set_x(xrt[..., 0])
     block.set_r(xrt[..., 1])
     block.set_t(xrt[..., 2])
@@ -62,12 +64,9 @@ def _make_grid_with_inlet():
     outlet = OutletPatch(i=-1, j=(0, -1), k=(0, -1), label="outlet")
     block.patches.append(inlet)
     block.patches.append(outlet)
-    inlet.set_Po_To_Alpha_Beta(
-        Po=np.full(inlet.shape, 1.2e5),
-        To=np.full(inlet.shape, 320.0),
-        Alpha=np.zeros(inlet.shape),
-        Beta=np.zeros(inlet.shape),
-    )
+    inlet.set_Po_To(Po=1.2e5, To=320.0)
+    inlet.set_Alpha(0.0)
+    inlet.set_Beta(0.0)
     outlet.set_P(1.1e5)
     return grid
 

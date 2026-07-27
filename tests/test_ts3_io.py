@@ -15,6 +15,27 @@ from ember import util
 import ember.plugins.ts as ts3
 
 
+def _inlet_Po_To(patch):
+    """Dimensional stagnation pressure and temperature an InletPatch prescribes.
+
+    ember's non-reflecting InletPatch stores its target as nondimensional
+    stagnation enthalpy/entropy (``ho_nd``, ``s_nd``); it no longer exposes a
+    dimensional ``Po``/``To`` getter, so this inverts through the fluid the
+    same way ``ember.block.Block.Po``/``To`` do.
+    """
+    fluid = patch.block.fluid
+    rhoo_nd, uo_nd = fluid.set_h_s(patch.ho_nd, patch.s_nd)
+    return (
+        fluid.get_P(rhoo_nd, uo_nd) * fluid.P_ref,
+        fluid.get_T(rhoo_nd, uo_nd) * fluid.T_ref,
+    )
+
+
+def _outlet_P(patch):
+    """Dimensional static pressure an OutletPatch prescribes."""
+    return patch.P_nd * patch.block.fluid.P_ref
+
+
 def test_write_ts3_multiblock_roundtrip(tmp_path):
     """Test Grid.write_ts3 with multiblock grid and verify roundtrip."""
     # Create multiblock grid with different shaped blocks
@@ -293,21 +314,21 @@ def test_ts3_multiblock_with_patches_roundtrip(tmp_path):
     # Block 1: x=0 to 0.5
     x1 = np.linspace(0.0, 0.5, 5)
     r1 = np.linspace(0.8, 1.2, 6)
-    t1 = np.linspace(0.0, np.pi / 4, 8)
+    t1 = np.linspace(0.0, 2 * np.pi / 24, 8)  # whole pitch for Nb=24
     xv1, rv1, tv1 = np.meshgrid(x1, r1, t1, indexing="ij")
     xrt1 = np.stack([xv1, rv1, tv1], axis=-1)
 
     # Block 2: x=0.4 to 0.9 (overlapping with block 1)
     x2 = np.linspace(0.4, 0.9, 6)
     r2 = np.linspace(0.8, 1.2, 6)
-    t2 = np.linspace(0.0, np.pi / 4, 8)
+    t2 = np.linspace(0.0, 2 * np.pi / 24, 8)
     xv2, rv2, tv2 = np.meshgrid(x2, r2, t2, indexing="ij")
     xrt2 = np.stack([xv2, rv2, tv2], axis=-1)
 
     # Block 3: x=0.8 to 1.3 (overlapping with block 2)
     x3 = np.linspace(0.8, 1.3, 5)
     r3 = np.linspace(0.8, 1.2, 6)
-    t3 = np.linspace(0.0, np.pi / 4, 8)
+    t3 = np.linspace(0.0, 2 * np.pi / 24, 8)
     xv3, rv3, tv3 = np.meshgrid(x3, r3, t3, indexing="ij")
     xrt3 = np.stack([xv3, rv3, tv3], axis=-1)
 
@@ -345,20 +366,19 @@ def test_ts3_multiblock_with_patches_roundtrip(tmp_path):
         block.set_conserved(conserved)
         block.set_wdist(np.ones(block.shape, dtype=np.float32) * 0.001)
 
-    # Add inlet patch to block 1 (i=0 face)
-    inlet_patch = InletPatch(i=0, j=(1, 5), k=(1, 7), label="inlet")
-    inlet_patch.set_Po_To_Alpha_Beta(
-        Po=np.ones((1, 5, 7)) * 101325.0,  # Total pressure (Pa)
-        To=np.ones((1, 5, 7)) * 288.15,  # Total temperature (K)
-        Alpha=np.zeros((1, 5, 7)),  # Yaw angle
-        Beta=np.ones((1, 5, 7)) * 15.0,  # Pitch angle (degrees)
-    )
+    # Add inlet patch to block 1 (i=0 face). The pitch (k) range must cover
+    # the whole blade pitch, per NonReflectingPatch._calc_hilbert, so only the
+    # span (j) range is a partial slice.
+    inlet_patch = InletPatch(i=0, j=(1, 5), k=(0, 7), label="inlet")
     block1.patches.append(inlet_patch)
+    inlet_patch.set_Po_To(Po=101325.0, To=288.15)
+    inlet_patch.set_Alpha(0.0)  # Yaw angle
+    inlet_patch.set_Beta(15.0)  # Pitch angle (degrees)
 
     # Add outlet patch to block 3 (i=-1 face)
-    outlet_patch = OutletPatch(i=-1, j=(1, 5), k=(1, 7), label="outlet")
-    outlet_patch.set_P(120000.0)  # Static pressure (Pa)
+    outlet_patch = OutletPatch(i=-1, j=(1, 5), k=(0, 7), label="outlet")
     block3.patches.append(outlet_patch)
+    outlet_patch.set_P(120000.0)  # Static pressure (Pa)
 
     # Add periodic patches to all blocks (k=0 and k=-1 faces)
     for i, block in enumerate([block1, block2, block3]):
@@ -445,21 +465,17 @@ def test_ts3_multiblock_with_patches_roundtrip(tmp_path):
 
     # Verify inlet patch properties were preserved
     recon_inlet = inlet_patches[0]
+    recon_Po, recon_To = _inlet_Po_To(recon_inlet)
+    orig_Po, orig_To = _inlet_Po_To(inlet_patch)
     np.testing.assert_allclose(
-        recon_inlet.Po,
-        inlet_patch.Po,
-        rtol=1e-5,
-        err_msg="Inlet total pressure not preserved",
+        recon_Po, orig_Po, rtol=1e-5, err_msg="Inlet total pressure not preserved"
     )
     np.testing.assert_allclose(
-        recon_inlet.To,
-        inlet_patch.To,
-        rtol=1e-5,
-        err_msg="Inlet total temperature not preserved",
+        recon_To, orig_To, rtol=1e-5, err_msg="Inlet total temperature not preserved"
     )
     np.testing.assert_allclose(
-        recon_inlet.Beta,
-        inlet_patch.Beta,
+        np.degrees(np.arcsin(recon_inlet.sinBeta)),
+        np.degrees(np.arcsin(inlet_patch.sinBeta)),
         rtol=1e-5,
         err_msg="Inlet pitch angle not preserved",
     )
@@ -467,8 +483,8 @@ def test_ts3_multiblock_with_patches_roundtrip(tmp_path):
     # Verify outlet patch properties were preserved
     recon_outlet = outlet_patches[0]
     np.testing.assert_allclose(
-        recon_outlet.P,
-        outlet_patch.P,
+        _outlet_P(recon_outlet),
+        _outlet_P(outlet_patch),
         rtol=1e-5,
         err_msg="Outlet pressure not preserved",
     )
@@ -527,18 +543,18 @@ def _make_inlet_writer():
     from ember.plugins.ts import TS3Writer
 
     block = Block(shape=(3, 4, 5))
-    xrt = util.linmesh3([0.0, 1.0], [0.5, 1.5], [0.0, 0.2], (3, 4, 5))
+    # Nb defaults to 1, so the whole pitch is the full circle; see
+    # ember.nonreflecting.NonReflectingPatch._calc_hilbert.
+    xrt = util.linmesh3([0.0, 1.0], [0.5, 1.5], [0.0, 2 * np.pi], (3, 4, 5))
     block.set_x(xrt[..., 0])
     block.set_r(xrt[..., 1])
     block.set_t(xrt[..., 2])
+    block.set_fluid(PerfectFluid(cp=1005.0, gamma=1.4, mu=1.8e-5, Pr=0.7))
     inlet = InletPatch(i=0, j=(0, -1), k=(0, -1), label="inlet")
     block.patches.append(inlet)
-    inlet.set_Po_To_Alpha_Beta(
-        Po=np.full(inlet.shape, 1.0e5),
-        To=np.full(inlet.shape, 300.0),
-        Alpha=np.zeros(inlet.shape),
-        Beta=np.zeros(inlet.shape),
-    )
+    inlet.set_Po_To(Po=1.0e5, To=300.0)
+    inlet.set_Alpha(0.0)
+    inlet.set_Beta(0.0)
     writer = TS3Writer()
     writer.get(Grid([block]), strict=False)
     return writer

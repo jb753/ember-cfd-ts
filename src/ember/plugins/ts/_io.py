@@ -311,6 +311,21 @@ def _unflip(x, shape=None):
         return np.swapaxes(np.reshape(x, (nk, nj, ni)), 0, 2)
 
 
+def _pitch_mean(patch, arr):
+    """Pitchwise-mean of a per-node field, in the shape a target setter accepts.
+
+    ember's non-reflecting inlet only takes a scalar, a spanwise profile, or a
+    field on the patch's own axes with the pitch axis collapsed to length 1
+    (see ``ember.nonreflecting.NonReflectingPatch._set_target_row``); a raw
+    per-node array read back from a TS3 file's ``*_pp`` variables is rejected
+    outright rather than silently averaged.
+    """
+    w = patch.weight_pitch
+    if arr.ndim > w.ndim:
+        w = w.reshape(w.shape + (1,) * (arr.ndim - w.ndim))
+    return np.sum(arr * w, axis=patch.pitch_dim, keepdims=True)
+
+
 def _scalar(x):
     """Extract scalar value from HDF5 dataset."""
     return np.squeeze(x).item()
@@ -669,6 +684,10 @@ def read_ts3(fname):
                     continue
 
                 patch = PATCH_BY_KIND[kind](i=(ist, ien), j=(jst, jen), k=(kst, ken))
+                # Attached before the setters below run: the non-reflecting
+                # inlet/outlet setters convert through the block's fluid
+                # immediately, so they need patch.block to already resolve.
+                block.patches.append(patch)
 
                 # Now process the patch variables and properties according to subclass
 
@@ -683,9 +702,15 @@ def read_ts3(fname):
                     yaw = _unflip(p["yaw_pp"], tshape)
                     pitch = _unflip(p["pitch_pp"], tshape)
 
-                    patch.set_Po_To_Alpha_Beta(
-                        Po=pstag, To=tstag, Alpha=yaw, Beta=pitch
+                    # The non-reflecting inlet only accepts a pitchwise-mean
+                    # prescription (a node-varying array is rejected rather
+                    # than silently averaged), so reduce along the pitch axis
+                    # here rather than handing over the raw per-node field.
+                    patch.set_Po_To(
+                        Po=_pitch_mean(patch, pstag), To=_pitch_mean(patch, tstag)
                     )
+                    patch.set_Alpha(_pitch_mean(patch, yaw))
+                    patch.set_Beta(_pitch_mean(patch, pitch))
 
                 # Outlet
                 elif isinstance(patch, OutletPatch):
@@ -713,8 +738,6 @@ def read_ts3(fname):
                         mach=cool_mach,
                         angle_def=1,
                     )
-
-                patches.append(patch)
 
             # Convert rpm block variables to RotatingPatch
             if rpmi1 := b["rpmi1_bv"][0]:
@@ -1093,16 +1116,19 @@ class TS3Writer:
                         sfinlet=0.0,
                     )
                 elif isinstance(patch, OutletPatch):
-                    # Note Turbostream uses 'PDI' control, not 'PID'
+                    # ember's OutletPatch no longer offers a mass-flow PID
+                    # throttle (dropped in favour of the non-reflecting
+                    # condition, which only prescribes a fixed static
+                    # pressure); write a plain static-pressure outlet.
                     pv.update(
                         ipout=3,
-                        throttle_type=1 if patch.mdot_target else 0,
-                        throttle_target=patch.mdot_target,
-                        throttle_k0=patch.K_pid[0],
-                        throttle_k1=patch.K_pid[2],
-                        throttle_k2=patch.K_pid[1],
+                        throttle_type=0,
+                        throttle_target=0.0,
+                        throttle_k0=0.0,
+                        throttle_k1=0.0,
+                        throttle_k2=0.0,
                         fthrottle=0.0,
-                        pout=patch.P,
+                        pout=float(np.mean(patch.P_nd)) * block.fluid.P_ref,
                         pout_st=0.0,
                         pout_en=0.0,
                         pout_nchange=0,
@@ -1135,10 +1161,12 @@ class TS3Writer:
                 self.pp[bid][pid_true] = pp = {}
                 if isinstance(patch, InletPatch):
                     x = np.ones(patch.shape)
-                    pp["pstag"] = patch.Po * x
-                    pp["tstag"] = patch.To * x
-                    pp["pitch"] = patch.Beta * x
-                    pp["yaw"] = patch.Alpha * x
+                    fluid = block.fluid
+                    rhoo_nd, uo_nd = fluid.set_h_s(patch.ho_nd, patch.s_nd)
+                    pp["pstag"] = fluid.get_P(rhoo_nd, uo_nd) * fluid.P_ref * x
+                    pp["tstag"] = fluid.get_T(rhoo_nd, uo_nd) * fluid.T_ref * x
+                    pp["pitch"] = np.degrees(np.arcsin(patch.sinBeta)) * x
+                    pp["yaw"] = np.degrees(np.arctan(patch.tanAlpha)) * x
                     pp["fsturb_mul"] = x  # Inlet turbulent viscosity ratio
 
         # Verify mixing patches are written paired to another mixing patch.
