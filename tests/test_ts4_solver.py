@@ -489,10 +489,12 @@ def test_read_flow_diverged_density(tmp_path):
 _LOG = """\
 STARTING TS4
 RK LOOP NO: 1
+TOTAL TIME: 1.5e-1
 ROVX DELTA:  1.0e-2
 INLET:  0.5 3.3e5 1.30e5
 OUTLET:  0.51 3.31e5 1.01e5
 RK LOOP NO: 2
+TOTAL TIME: 2.5e-1
 ROVX DELTA:  1.0e-4
 INLET:  0.52 3.3e5 1.30e5
 OUTLET:  0.52 3.31e5 1.02e5
@@ -522,6 +524,19 @@ def test_parse_ts4_log_scales_mass_flow_by_blade_count(tmp_path):
     mdot_ref = fluid.rhoV_ref * grid[0].L_ref**2
     np.testing.assert_allclose(
         hist.mdot_nd[0, 0], 0.5 * 36.0 / mdot_ref, rtol=1e-5
+    )
+
+
+def test_parse_ts4_log_reads_wall_time(tmp_path):
+    """hist.time is the cumulative sum of each step's TOTAL TIME, not the
+    time taken to parse the (already-finished) log."""
+    path = tmp_path / "log_ts4.txt"
+    path.write_text(_LOG)
+
+    hist = parse_ts4_log(str(path), _make_grid(n_block=1))
+
+    np.testing.assert_allclose(
+        hist.time[:2] * hist._TIME_SCALE, [0.15, 0.4], rtol=1e-6
     )
 
 
@@ -653,6 +668,7 @@ _TURBOSTREAM_BODY = {
             f.create_dataset("node_array_turb0", data=np.full(x.size, 2e-3))
 
     print("RK LOOP NO: 1")
+    print("TOTAL TIME: 1.0e-1")
     print("ROVX DELTA:  1.0e-3")
     print("INLET:  0.5 3.3e5 1.30e5")
     print("OUTLET:  0.5 3.3e5 1.01e5")

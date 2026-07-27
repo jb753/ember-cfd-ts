@@ -20,10 +20,14 @@ from ember.grid import ConvergenceStep
 
 # TS4 logs one residual and one line per through-flow boundary per step. The
 # INLET/OUTLET lines carry mass flow, stagnation enthalpy and stagnation
-# pressure, in that order.
+# pressure, in that order. Each step block also logs its own solve time
+# ("TOTAL TIME: <seconds>"), immediately before that step's ROVX DELTA line
+# -- the cumulative sum of these is the real elapsed wall-clock time, unlike
+# perf_counter() sampled while parsing an already-finished log.
 _re_resid = re.compile(r"^ROVX DELTA:\s+(\S+)", re.MULTILINE)
 _re_inlet = re.compile(r"^INLET:\s+(\S+)\s+(\S+)\s+(\S+)", re.MULTILINE)
 _re_outlet = re.compile(r"^OUTLET:\s+(\S+)\s+(\S+)\s+(\S+)", re.MULTILINE)
+_re_step_time = re.compile(r"^TOTAL TIME:\s+(\S+)", re.MULTILINE)
 
 
 def parse_ts4_log(filename, grid):
@@ -56,6 +60,7 @@ def parse_ts4_log(filename, grid):
     resid = [float(v) for v in _re_resid.findall(text)]
     inlet = [[float(v) for v in m] for m in _re_inlet.findall(text)]
     outlet = [[float(v) for v in m] for m in _re_outlet.findall(text)]
+    step_time = [float(v) for v in _re_step_time.findall(text)]
 
     # A step is complete once its OUTLET line has been written, so that count
     # sets the history length and the other records are truncated to match a
@@ -64,12 +69,19 @@ def parse_ts4_log(filename, grid):
     n_log = len(outlet)
     if n_log == 0:
         raise ValueError(f"No completed steps found in TS4 log {filename}")
-    if len(inlet) < n_log or len(resid) < n_log:
+    if len(inlet) < n_log or len(resid) < n_log or len(step_time) < n_log:
         raise ValueError(
             f"TS4 log {filename} has {n_log} OUTLET records but "
-            f"{len(inlet)} INLET and {len(resid)} residual records; "
-            "the log is internally inconsistent."
+            f"{len(inlet)} INLET, {len(resid)} residual and "
+            f"{len(step_time)} TOTAL TIME records; the log is internally "
+            "inconsistent."
         )
+
+    # Cumulative sum of each step's own TOTAL TIME line is the real elapsed
+    # wall-clock time; record_convergence's default (perf_counter() sampled
+    # while parsing an already-finished log) would otherwise report the
+    # parsing loop's own near-instant runtime instead of the solve's.
+    cum_time = np.cumsum(step_time[:n_log])
 
     out = ConvergenceHistory.from_grid(n_log, grid)
 
@@ -115,6 +127,6 @@ def parse_ts4_log(filename, grid):
             dP_I=np.nan,
             dP_D=np.nan,
         )
-        out.record_convergence(i, conv)
+        out.record_convergence(i, conv, time=float(cum_time[i]))
 
     return out
