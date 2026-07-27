@@ -264,7 +264,16 @@ def _convert(config):
     _run_in_workdir(
         config,
         f". {config.environment_script} 2> /dev/null;"
-        f" mpirun -np 1 {_CONVERT_SCRIPT} input.hdf5 input_ts4 > convert.log",
+        # Invoked via "python3 <script>" rather than executing the script
+        # directly: a non-editable install (uv pip install, no -e) does not
+        # preserve the source tree's executable bit on installed data files,
+        # so mpirun -np 1 {_CONVERT_SCRIPT} would fail with "could not
+        # access or execute" once ember-cfd-ts is installed that way. Use
+        # whatever "python3" the sourced Turbostream environment provides
+        # (its own ts.process/VTK stack), not this interpreter's own
+        # sys.executable.
+        f" mpirun -np 1 python3 {_CONVERT_SCRIPT} input.hdf5 input_ts4"
+        f" > convert.log",
         "TS3 to TS4 conversion",
     )
 
