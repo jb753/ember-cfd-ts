@@ -49,6 +49,9 @@ managed = true
 [tool.uv.sources]
 ember-cfd = { workspace = true }
 
+[tool.uv.workspace]
+members = ["../ember"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",
