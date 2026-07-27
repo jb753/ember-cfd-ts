@@ -45,12 +45,11 @@ managed = true
 # uv workspace members -- true whenever this submodule is checked out under
 # the ember-paper superproject, which declares both as members in its root
 # pyproject.toml. This package has no standalone (non-workspace) uv project
-# of its own; building it outside that superproject is not supported.
+# of its own; building it outside that superproject is not supported. It must
+# NOT declare its own [tool.uv.workspace] table: uv treats that as a nested
+# workspace root and refuses to resolve it under the superproject's workspace.
 [tool.uv.sources]
 ember-cfd = { workspace = true }
-
-[tool.uv.workspace]
-members = ["../ember"]
 
 [dependency-groups]
 dev = [
