@@ -18,7 +18,7 @@ from ember.grid import Grid
 from ember.patch import ProbePatch
 import ember.plugins.ts as ts3
 from ember.plugins.ts import _io
-import ember.util_yaml as util_yaml
+import ember.yaml_util as yaml_util
 
 
 def _make_block(shape=(6, 5, 4), rpm=3600.0, Nb=24):
@@ -60,7 +60,7 @@ def test_write_emits_probe_metadata(tmp_path):
     meta_path = tmp_path / "probe_meta.yaml"
     assert meta_path.exists()
 
-    meta = util_yaml.read_yaml(str(meta_path))
+    meta = yaml_util.read_yaml(str(meta_path))
     entry = meta[0][0]
     assert entry["shape"] == [1, 1, 1]
     assert entry["Nb"] == 24
@@ -116,7 +116,7 @@ def test_write_without_probes_makes_no_sidecar(tmp_path):
 
 
 def _write_meta(dname, meta):
-    util_yaml.write_yaml(meta, os.path.join(str(dname), "probe_meta.yaml"))
+    yaml_util.write_yaml(meta, os.path.join(str(dname), "probe_meta.yaml"))
 
 
 def test_read_probe_metadata(tmp_path):

@@ -321,16 +321,16 @@ def write_throttle(ts4_config, grid, fname, workdir):
     fac_adjust = 0.5 if ts4_config.implicit_scheme else 1.0
 
     for patch in outlets:
-        # Note the predicate: ember's OutletPatch always has a K_pid tuple
-        # (defaulting to zeros), so unlike turbigen's port there is no None to
-        # test against -- an unthrottled outlet is one with no mass-flow target.
-        if patch.mdot_target > 0:
+        # Note the predicate: an unthrottled ember OutletPatch carries
+        # mdot_target None, not zero, so test against None rather than ordering
+        # it against a number.
+        if patch.mdot_target is not None:
             mdot_flag = True
             # TS4 targets the mass flow through one passage, not the annulus.
             mass_target.append(float(patch.mdot_target) / float(patch.block.Nb))
             throttle_kind.append(0)
             # TS4 offers integral control only, so only the I gain carries over.
-            throttle_k0.append(float(patch.K_pid[1]) * fac_adjust)
+            throttle_k0.append(float(patch.Ki) * fac_adjust)
         else:
             mass_target.append(0.0)
             throttle_kind.append(1)

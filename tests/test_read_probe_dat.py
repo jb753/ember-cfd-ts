@@ -13,7 +13,7 @@ import numpy as np
 
 import pytest
 
-from ember import util_yaml
+from ember import yaml_util
 from ember.plugins.ts import read_probe_dat, read_probe_dat_dir
 
 
@@ -58,7 +58,7 @@ def write_probe_meta(
         "fs": fs,
         **sampling_av(nsteps, **(av_overrides or {})),
     }
-    util_yaml.write_yaml({bid: {pid: entry}}, str(tmp_path / "probe_meta.yaml"))
+    yaml_util.write_yaml({bid: {pid: entry}}, str(tmp_path / "probe_meta.yaml"))
 
 
 def create_probe_dat(filepath, shape, nsteps=10):
@@ -286,7 +286,7 @@ def write_multi_probe(tmp_path, probes, *, fs=7200.0, nsteps=6):
             **sampling_av(nsteps),
         }
         create_probe_dat(tmp_path / f"output_probe_{bid}_{pid}.dat", shape, nsteps)
-    util_yaml.write_yaml(meta, str(tmp_path / "probe_meta.yaml"))
+    yaml_util.write_yaml(meta, str(tmp_path / "probe_meta.yaml"))
 
 
 def test_dat_dir_loads_all(tmp_path):
@@ -414,7 +414,7 @@ def test_dat_dir_validate_false_threads_through(tmp_path):
             }
         }
     }
-    util_yaml.write_yaml(meta, str(tmp_path / "probe_meta.yaml"))
+    yaml_util.write_yaml(meta, str(tmp_path / "probe_meta.yaml"))
     create_probe_dat(tmp_path / f"output_probe_{bid}_{pid}.dat", [2], nsteps)
 
     blocks, _ = read_probe_dat_dir(tmp_path, validate=False)

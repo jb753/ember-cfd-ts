@@ -14,6 +14,12 @@ from ember.fluid import PerfectFluid
 from ember import util
 import ember.plugins.ts as ts3
 
+# A block carrying an inlet must span exactly one whole pitch: the inlet is
+# non-reflecting, and its pitchwise node weights are checked to sum to 1.
+# Fixtures with no inlet keep their own arbitrary extents.
+NBLADE = 32
+PITCH = 2.0 * np.pi / NBLADE
+
 
 def test_write_ts3_multiblock_roundtrip(tmp_path):
     """Test Grid.write_ts3 with multiblock grid and verify roundtrip."""
@@ -23,9 +29,9 @@ def test_write_ts3_multiblock_roundtrip(tmp_path):
     block3 = Block(shape=(2, 5, 3))
 
     # Set coordinates for each block
-    xrt1 = util.linmesh3([0.0, 1.0], [0.5, 1.5], [0.0, 0.2], (3, 4, 5))
-    xrt2 = util.linmesh3([1.0, 2.0], [1.5, 2.5], [0.1, 0.3], (4, 3, 6))
-    xrt3 = util.linmesh3([2.0, 2.5], [0.8, 1.8], [0.0, 0.15], (2, 5, 3))
+    xrt1 = util.linmesh3([0.0, 1.0], [0.5, 1.5], [0.0, PITCH], (3, 4, 5))
+    xrt2 = util.linmesh3([1.0, 2.0], [1.5, 2.5], [0.1, 0.1 + PITCH], (4, 3, 6))
+    xrt3 = util.linmesh3([2.0, 2.5], [0.8, 1.8], [0.0, PITCH], (2, 5, 3))
 
     block1.set_x(xrt1[..., 0])
     block1.set_r(xrt1[..., 1])
@@ -43,7 +49,7 @@ def test_write_ts3_multiblock_roundtrip(tmp_path):
     for block in [block1, block2, block3]:
         block.set_fluid(fluid)
         block.set_rpm(0.0)
-        block.set_Nb(1)
+        block.set_Nb(NBLADE)
 
         # A non-trivial, physically meaningful state: P/T vary along i and all
         # three velocity components are non-zero, so the flow-field roundtrip is
@@ -329,7 +335,9 @@ def test_ts3_multiblock_with_patches_roundtrip(tmp_path):
     for i, block in enumerate([block1, block2, block3]):
         block.set_fluid(fluid)
         block.set_rpm(3600.0)  # Rotating at 3600 RPM
-        block.set_Nb(24)  # 24 blades
+        # 8 blades, so the pitch 2*pi/8 is exactly the pi/4 the blocks span:
+        # the non-reflecting inlet requires a whole pitch.
+        block.set_Nb(8)
 
         # Set realistic conserved variables for compressor flow
         rho = np.ones(block.shape, dtype=np.float32) * 1.2  # kg/m³
@@ -346,19 +354,18 @@ def test_ts3_multiblock_with_patches_roundtrip(tmp_path):
         block.set_wdist(np.ones(block.shape, dtype=np.float32) * 0.001)
 
     # Add inlet patch to block 1 (i=0 face)
-    inlet_patch = InletPatch(i=0, j=(1, 5), k=(1, 7), label="inlet")
-    inlet_patch.set_Po_To_Alpha_Beta(
-        Po=np.ones((1, 5, 7)) * 101325.0,  # Total pressure (Pa)
-        To=np.ones((1, 5, 7)) * 288.15,  # Total temperature (K)
-        Alpha=np.zeros((1, 5, 7)),  # Yaw angle
-        Beta=np.ones((1, 5, 7)) * 15.0,  # Pitch angle (degrees)
-    )
+    # Spans the whole face: a non-reflecting inlet must cover a whole pitch.
+    inlet_patch = InletPatch(i=0, j=(0, -1), k=(0, -1), label="inlet")
+    # Attach first: the setters convert against the block's fluid.
     block1.patches.append(inlet_patch)
+    inlet_patch.set_Po_To(Po=101325.0, To=288.15)  # Total pressure (Pa), temp (K)
+    inlet_patch.set_Alpha(0.0)  # Yaw angle
+    inlet_patch.set_Beta(15.0)  # Pitch angle (degrees)
 
     # Add outlet patch to block 3 (i=-1 face)
-    outlet_patch = OutletPatch(i=-1, j=(1, 5), k=(1, 7), label="outlet")
-    outlet_patch.set_P(120000.0)  # Static pressure (Pa)
+    outlet_patch = OutletPatch(i=-1, j=(0, -1), k=(0, -1), label="outlet")
     block3.patches.append(outlet_patch)
+    outlet_patch.set_P(120000.0)  # Static pressure (Pa)
 
     # Add periodic patches to all blocks (k=0 and k=-1 faces)
     for i, block in enumerate([block1, block2, block3]):
@@ -444,31 +451,34 @@ def test_ts3_multiblock_with_patches_roundtrip(tmp_path):
     assert len(periodic_patches_b3) == 2, "Block 3 should have 2 periodic patches"
 
     # Verify inlet patch properties were preserved
+    # The inlet holds its prescription as non-reflecting target rows, so compare
+    # those: ho_nd/s_nd carry what Po/To were converted into, sinBeta the pitch.
     recon_inlet = inlet_patches[0]
     np.testing.assert_allclose(
-        recon_inlet.Po,
-        inlet_patch.Po,
+        recon_inlet.ho_nd,
+        inlet_patch.ho_nd,
         rtol=1e-5,
-        err_msg="Inlet total pressure not preserved",
+        err_msg="Inlet stagnation enthalpy not preserved",
     )
     np.testing.assert_allclose(
-        recon_inlet.To,
-        inlet_patch.To,
+        recon_inlet.s_nd,
+        inlet_patch.s_nd,
         rtol=1e-5,
-        err_msg="Inlet total temperature not preserved",
+        err_msg="Inlet entropy not preserved",
     )
     np.testing.assert_allclose(
-        recon_inlet.Beta,
-        inlet_patch.Beta,
+        recon_inlet.sinBeta,
+        inlet_patch.sinBeta,
         rtol=1e-5,
         err_msg="Inlet pitch angle not preserved",
     )
 
     # Verify outlet patch properties were preserved
+    # As the inlet above, the prescription survives as a target row.
     recon_outlet = outlet_patches[0]
     np.testing.assert_allclose(
-        recon_outlet.P,
-        outlet_patch.P,
+        recon_outlet.P_nd,
+        outlet_patch.P_nd,
         rtol=1e-5,
         err_msg="Outlet pressure not preserved",
     )
@@ -527,18 +537,19 @@ def _make_inlet_writer():
     from ember.plugins.ts import TS3Writer
 
     block = Block(shape=(3, 4, 5))
-    xrt = util.linmesh3([0.0, 1.0], [0.5, 1.5], [0.0, 0.2], (3, 4, 5))
+    xrt = util.linmesh3([0.0, 1.0], [0.5, 1.5], [0.0, PITCH], (3, 4, 5))
     block.set_x(xrt[..., 0])
     block.set_r(xrt[..., 1])
     block.set_t(xrt[..., 2])
+    block.set_Nb(NBLADE)
+    # set_Po_To converts against the block's fluid, so one is required even
+    # though this fixture only exercises the patch-variable API.
+    block.set_fluid(PerfectFluid(cp=1005.0, gamma=1.4, mu=1.8e-5, Pr=0.7))
     inlet = InletPatch(i=0, j=(0, -1), k=(0, -1), label="inlet")
     block.patches.append(inlet)
-    inlet.set_Po_To_Alpha_Beta(
-        Po=np.full(inlet.shape, 1.0e5),
-        To=np.full(inlet.shape, 300.0),
-        Alpha=np.zeros(inlet.shape),
-        Beta=np.zeros(inlet.shape),
-    )
+    inlet.set_Po_To(Po=1.0e5, To=300.0)
+    inlet.set_Alpha(0.0)
+    inlet.set_Beta(0.0)
     writer = TS3Writer()
     writer.get(Grid([block]), strict=False)
     return writer

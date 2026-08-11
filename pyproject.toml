@@ -16,7 +16,12 @@ classifiers = [
 # Follows SPEC 0's Python support window: https://scientific-python.org/specs/spec-0000/
 requires-python = ">=3.12"
 dependencies = [
-    "ember-cfd",
+    # Tracks core's dev branch, not a release: this plugin needs the post-0.1.0
+    # patch API (non-reflecting inlets, the OutletPatch.Kp/Ki accessors) that no
+    # published version carries yet. Temporary, and deliberately so -- a direct
+    # URL dependency cannot be uploaded to PyPI, so this must become a version
+    # bound (>=0.2.0,<0.3) when core next releases.
+    "ember-cfd @ git+https://github.com/jb753/ember@dev",
     "h5py~=3.16.0",
     "numpy~=2.5.0",
     "pyyaml~=6.0.3",
@@ -37,9 +42,11 @@ namespaces = true
 [tool.uv]
 managed = true
 
-# Develop against the sibling ember working copy rather than the published
-# release: this plugin tracks core APIs (Grid alignment, Block/patch accessors)
-# ahead of what is on PyPI.
+# A local convenience only, for developing against the sibling ember working
+# copy. The version bound in [project.dependencies] is the truth of record: it
+# is what pip, and therefore Read the Docs, resolves. `uv sync --no-sources`
+# ignores this table and reproduces exactly what a user gets, so the declared
+# bound can be checked for honesty.
 [tool.uv.sources]
 ember-cfd = { path = "../ember", editable = true }
 

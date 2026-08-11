@@ -32,15 +32,20 @@ def _make_duct_grid():
     # consistency check passes (cp=1005, ga=1.4, viscosity=0.001, prandtl=0.72).
     fluid = PerfectFluid(cp=1005.0, gamma=1.4, mu=1.0e-3, Pr=0.72)
 
+    # The block must span exactly one whole pitch: the inlet is non-reflecting,
+    # and its pitchwise node weights are checked to sum to 1.
+    nblade = 32
     shape = (4, 4, 4)
     block = Block(shape=shape)
-    xrt = ember.util.linmesh3([0.0, 1.0], [0.5, 1.5], [0.0, 0.2], shape)
+    xrt = ember.util.linmesh3(
+        [0.0, 1.0], [0.5, 1.5], [0.0, 2.0 * np.pi / nblade], shape
+    )
     block.set_x(xrt[..., 0])
     block.set_r(xrt[..., 1])
     block.set_t(xrt[..., 2])
     block.set_fluid(fluid)
     block.set_rpm(0.0)
-    block.set_Nb(1)
+    block.set_Nb(nblade)
     block.set_P_T(np.full(shape, 1.0e5), np.full(shape, 300.0))
     block.set_Vxrt(
         np.stack([np.full(shape, 100.0), np.zeros(shape), np.zeros(shape)], axis=-1)
@@ -49,12 +54,9 @@ def _make_duct_grid():
     outlet = OutletPatch(i=-1, j=(0, -1), k=(0, -1), label="outlet")
     block.patches.append(inlet)
     block.patches.append(outlet)
-    inlet.set_Po_To_Alpha_Beta(
-        Po=np.full(inlet.shape, 1.0e5),
-        To=np.full(inlet.shape, 300.0),
-        Alpha=np.zeros(inlet.shape),
-        Beta=np.zeros(inlet.shape),
-    )
+    inlet.set_Po_To(Po=1.0e5, To=300.0)
+    inlet.set_Alpha(0.0)
+    inlet.set_Beta(0.0)
     outlet.set_P(0.9e5)
     return Grid([block])
 

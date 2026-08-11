@@ -41,6 +41,11 @@ CP, GAMMA, MU, PR = 1005.0, 1.4, 1.8e-5, 0.7
 CV = CP / GAMMA
 RGAS = CP - CV
 
+# Blocks must span exactly one whole pitch: the inlet is non-reflecting, and its
+# pitchwise node weights are checked to sum to 1.
+NBLADE = 36
+PITCH = 2.0 * np.pi / NBLADE
+
 
 def _make_block(shape, xs, rs, ts_, T_dtm, P, T):
     block = Block(shape=shape)
@@ -52,7 +57,7 @@ def _make_block(shape, xs, rs, ts_, T_dtm, P, T):
         PerfectFluid(cp=CP, gamma=GAMMA, mu=MU, Pr=PR, T_dtm=T_dtm)
     )
     block.set_rpm(0.0)
-    block.set_Nb(36)
+    block.set_Nb(NBLADE)
     block.set_P_T(np.full(shape, P), np.full(shape, T))
     block.set_Vxrt(
         np.stack(
@@ -77,7 +82,7 @@ def _make_grid(T_dtm=300.0, n_block=2):
     correspondence and the outlet-to-bcell mapping trivially.
     """
     blocks = [
-        _make_block((3, 4, 5), [0.0, 1.0], [0.5, 1.5], [0.0, 0.2], T_dtm, 1.2e5, 320.0)
+        _make_block((3, 4, 5), [0.0, 1.0], [0.5, 1.5], [0.0, PITCH], T_dtm, 1.2e5, 320.0)
     ]
     if n_block > 1:
         # Geometrically disjoint from block 0, so no node is shared. A shared
@@ -88,19 +93,16 @@ def _make_grid(T_dtm=300.0, n_block=2):
         # quantity is consistent across the join.
         blocks.append(
             _make_block(
-                (4, 3, 6), [1.5, 2.5], [0.5, 1.5], [0.0, 0.2], T_dtm, 1.1e5, 310.0
+                (4, 3, 6), [1.5, 2.5], [0.5, 1.5], [0.0, PITCH], T_dtm, 1.1e5, 310.0
             )
         )
 
     inlet = InletPatch(i=0, j=(0, -1), k=(0, -1), label="inlet")
     blocks[0].patches.append(inlet)
-    inlet.set_Po_To_Alpha_Beta(
-        Po=np.full(inlet.shape, 1.3e5),
-        To=np.full(inlet.shape, 330.0),
-        Alpha=np.full(inlet.shape, 10.0),
-        # A non-zero pitch, so the TS4 sign flip is observable.
-        Beta=np.full(inlet.shape, 7.5),
-    )
+    inlet.set_Po_To(Po=1.3e5, To=330.0)
+    inlet.set_Alpha(10.0)
+    # A non-zero pitch, so the TS4 sign flip is observable.
+    inlet.set_Beta(7.5)
     outlet = OutletPatch(i=-1, j=(0, -1), k=(0, -1), label="outlet")
     blocks[-1].patches.append(outlet)
     outlet.set_P(1.0e5)
@@ -245,18 +247,19 @@ def test_write_ts3_input_inverts_inlet_pitch(tmp_path):
     io4.write_ts3_input(grid, fname)
 
     read_back = read_ts3(fname)
-    written = read_back[0].patches.inlet[0].Beta
+    # The prescription survives as sinBeta, so invert it back to degrees.
+    written = np.degrees(np.arcsin(read_back[0].patches.inlet[0].sinBeta))
     np.testing.assert_allclose(written, -7.5, rtol=1e-5)
 
 
 def test_write_ts3_input_does_not_mutate_grid(tmp_path):
     """The sign flip touches the file only, never the caller's grid."""
     grid = _make_grid()
-    before = grid[0].patches.inlet[0].Beta.copy()
+    before = grid[0].patches.inlet[0].sinBeta.copy()
 
     io4.write_ts3_input(grid, str(tmp_path / "input.hdf5"))
 
-    np.testing.assert_allclose(grid[0].patches.inlet[0].Beta, before)
+    np.testing.assert_allclose(grid[0].patches.inlet[0].sinBeta, before)
 
 
 # --- wall distance ----------------------------------------------------------
@@ -288,9 +291,9 @@ def test_write_wall_distance_across_matching_interface(tmp_path):
     """
     shape = (3, 4, 5)
     blocks = [
-        _make_block(shape, [0.0, 1.0], [0.5, 1.5], [0.0, 0.2], 300.0, 1.2e5, 320.0),
+        _make_block(shape, [0.0, 1.0], [0.5, 1.5], [0.0, PITCH], 300.0, 1.2e5, 320.0),
         # Identical j/k distribution on the shared x = 1 plane.
-        _make_block(shape, [1.0, 2.0], [0.5, 1.5], [0.0, 0.2], 300.0, 1.1e5, 310.0),
+        _make_block(shape, [1.0, 2.0], [0.5, 1.5], [0.0, PITCH], 300.0, 1.1e5, 310.0),
     ]
     grid = Grid(blocks)
     xyz = _grid_xyz(grid)
@@ -362,7 +365,7 @@ def test_write_throttle_pressure_outlet(tmp_path):
 def test_write_throttle_mass_flow_outlet(tmp_path):
     """A throttled outlet carries a per-passage target and the integral gain."""
     grid = _make_grid()
-    grid.patches.outlet[0].set_throttle(mdot_target=7.2, K_pid=(1.0, 0.25, 0.5))
+    grid.patches.outlet[0].set_throttle(mdot_target=7.2, Kp=1.0, Ki=0.25)
     fname = tmp_path / "input_ts4.hdf5"
     _write_ts4_file(fname, grid)
 

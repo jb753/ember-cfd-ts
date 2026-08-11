@@ -32,8 +32,7 @@ from ember.patch import (
     ProbePatch,
     InviscidPatch,
 )
-from ember import util
-from ember import util_yaml
+from ember import yaml_util
 
 logger = logging.getLogger(__name__)
 
@@ -309,6 +308,58 @@ def _unflip(x, shape=None):
         else:
             ni, nj, nk = shape
         return np.swapaxes(np.reshape(x, (nk, nj, ni)), 0, 2)
+
+
+def _perm_flip_to_dirs(perm, flip, const_dim):
+    """Convert a patch pairing's permutation/flip to TS3 ``idir``/``jdir``/``kdir``.
+
+    Lived in ``ember.util`` until core pruned it as uncalled: the encoding is
+    TS3's, not ember's, and this writer is its only caller, so it belongs here.
+
+    ``perm[self_axis] = other_axis`` gives the axis of the paired block each of
+    this patch's axes aligns with, and ``flip`` lists the axes reversed after
+    that permutation. The returned triple encodes, per axis, 0-2 for a positive
+    alignment with the other block's i/j/k, 3-5 for a negative one, and 6 for
+    the dimension the patch is constant in.
+
+    Examples
+    --------
+    >>> _perm_flip_to_dirs((0, 1, 2), (), 1)
+    (0, 6, 2)
+    >>> _perm_flip_to_dirs((1, 0, 2), (0,), 2)
+    (4, 3, 6)
+    """
+    dirs = []
+    for self_axis in range(3):
+        if self_axis == const_dim:
+            dirs.append(6)
+        else:
+            dirs.append(perm[self_axis] + (3 if self_axis in flip else 0))
+    return tuple(dirs)
+
+
+def _collapse_pitch(patch, arr, name):
+    """Reduce a TS3 face profile to the spanwise prescription ember accepts.
+
+    TS3 stores an inlet prescription over the whole patch face, but a
+    non-reflecting patch imposes only the pitchwise mean at each span station
+    and refuses a pitchwise-varying value rather than averaging it silently.
+    Averaging is right *here*, where the file's own convention is known, but a
+    file that genuinely varies along the pitch is losing something in the
+    process, so say so rather than quietly dropping it.
+    """
+    mean = np.mean(arr, axis=patch.pitch_dim, keepdims=True)
+    spread = float(np.ptp(arr, axis=patch.pitch_dim).max())
+    scale = float(np.abs(mean).max())
+    if scale > 0.0 and spread > 1e-6 * scale:
+        logger.warning(
+            "Inlet patch %r: %s varies by %.3g along the pitch; ember imposes "
+            "the pitchwise mean at each span station, so only that is kept.",
+            patch.label,
+            name,
+            spread,
+        )
+    return mean
 
 
 def _scalar(x):
@@ -669,6 +720,12 @@ def read_ts3(fname):
                     continue
 
                 patch = PATCH_BY_KIND[kind](i=(ist, ien), j=(jst, jen), k=(kst, ken))
+                # Attach before prescribing: the setters below convert against
+                # the block's fluid and reference scales, so they need the patch
+                # already on its block. The rotating patches built afterwards
+                # still go through the local list, so the final order --
+                # file patches first, then rotating -- is unchanged.
+                block.patches.append(patch)
 
                 # Now process the patch variables and properties according to subclass
 
@@ -683,9 +740,14 @@ def read_ts3(fname):
                     yaw = _unflip(p["yaw_pp"], tshape)
                     pitch = _unflip(p["pitch_pp"], tshape)
 
-                    patch.set_Po_To_Alpha_Beta(
-                        Po=pstag, To=tstag, Alpha=yaw, Beta=pitch
+                    # Four independent target rows, so the order of these three
+                    # calls does not matter.
+                    patch.set_Po_To(
+                        Po=_collapse_pitch(patch, pstag, "Po"),
+                        To=_collapse_pitch(patch, tstag, "To"),
                     )
+                    patch.set_Alpha(_collapse_pitch(patch, yaw, "Alpha"))
+                    patch.set_Beta(_collapse_pitch(patch, pitch, "Beta"))
 
                 # Outlet
                 elif isinstance(patch, OutletPatch):
@@ -713,8 +775,6 @@ def read_ts3(fname):
                         mach=cool_mach,
                         angle_def=1,
                     )
-
-                patches.append(patch)
 
             # Convert rpm block variables to RotatingPatch
             if rpmi1 := b["rpmi1_bv"][0]:
@@ -1075,7 +1135,7 @@ class TS3Writer:
                         # mixing planes are circumferentially averaged.
                         if isinstance(patch, PeriodicPatch):
                             (perm, flip) = conn[bid, pid][1]
-                            pa["idir"], pa["jdir"], pa["kdir"] = util.perm_flip_to_dirs(
+                            pa["idir"], pa["jdir"], pa["kdir"] = _perm_flip_to_dirs(
                                 perm, flip, patch.const_dim
                             )
                     elif strict:
@@ -1093,16 +1153,21 @@ class TS3Writer:
                         sfinlet=0.0,
                     )
                 elif isinstance(patch, OutletPatch):
-                    # Note Turbostream uses 'PDI' control, not 'PID'
+                    # Note Turbostream uses 'PDI' control, not 'PID'. ember's
+                    # controller is PI, so the derivative slot is written zero;
+                    # mdot_target is None, not 0, on an unthrottled outlet.
+                    throttled = patch.mdot_target is not None
                     pv.update(
                         ipout=3,
-                        throttle_type=1 if patch.mdot_target else 0,
-                        throttle_target=patch.mdot_target,
-                        throttle_k0=patch.K_pid[0],
-                        throttle_k1=patch.K_pid[2],
-                        throttle_k2=patch.K_pid[1],
+                        throttle_type=1 if throttled else 0,
+                        throttle_target=patch.mdot_target if throttled else 0.0,
+                        throttle_k0=patch.Kp,
+                        throttle_k1=0.0,
+                        throttle_k2=patch.Ki,
                         fthrottle=0.0,
-                        pout=patch.P,
+                        # As the inlet above, the prescription survives as a
+                        # nondimensional target row, not as the Pa it was given.
+                        pout=float(np.mean(patch.P_nd)) * patch.block.fluid.P_ref,
                         pout_st=0.0,
                         pout_en=0.0,
                         pout_nchange=0,
@@ -1135,10 +1200,24 @@ class TS3Writer:
                 self.pp[bid][pid_true] = pp = {}
                 if isinstance(patch, InletPatch):
                     x = np.ones(patch.shape)
-                    pp["pstag"] = patch.Po * x
-                    pp["tstag"] = patch.To * x
-                    pp["pitch"] = patch.Beta * x
-                    pp["yaw"] = patch.Alpha * x
+                    # The inlet keeps its prescription as non-reflecting target
+                    # rows, not as the Po/To/Alpha/Beta it was given, so recover
+                    # them by inverting what set_Po_To/set_Alpha/set_Beta did.
+                    # The angles invert without a fluid; the stagnation pair
+                    # needs one, since set_Po_To went (Po, To) -> set_P_T ->
+                    # get_h/get_s and set_h_s is what undoes that.
+                    pp["pitch"] = np.degrees(np.arcsin(patch.sinBeta)) * x
+                    pp["yaw"] = np.degrees(np.arctan(patch.tanAlpha)) * x
+                    try:
+                        fluid = patch.block.fluid
+                        rhoo_nd, uo_nd = fluid.set_h_s(patch.ho_nd, patch.s_nd)
+                        pp["pstag"] = fluid.get_P(rhoo_nd, uo_nd) * fluid.P_ref * x
+                        pp["tstag"] = fluid.get_T(rhoo_nd, uo_nd) * fluid.T_ref * x
+                    except ValueError:
+                        # As the flow variables above: omit what a fluid-less
+                        # grid cannot express, unless strict demands it.
+                        if strict:
+                            raise
                     pp["fsturb_mul"] = x  # Inlet turbulent viscosity ratio
 
         # Verify mixing patches are written paired to another mixing patch.
@@ -1303,7 +1382,7 @@ class TS3Writer:
             return
         meta_path = Path(fname).parent / "probe_meta.yaml"
         logger.info(f"Writing probe metadata to {meta_path}")
-        util_yaml.write_yaml(self.probe_meta, meta_path)
+        yaml_util.write_yaml(self.probe_meta, meta_path)
 
     def write_pv(self, f):
         for bid, pv in enumerate(self.pv):
@@ -1351,7 +1430,7 @@ def read_probe_metadata(dname):
     if not fnames:
         return {}
 
-    probe_meta = util_yaml.read_yaml(os.path.join(dname, "probe_meta.yaml"))
+    probe_meta = yaml_util.read_yaml(os.path.join(dname, "probe_meta.yaml"))
 
     out = {}
     for f in fnames:
@@ -1382,7 +1461,7 @@ def _read_probe_meta_entry(path):
         )
 
     bid, pid = _parse_bid_pid(path)
-    probe_meta = util_yaml.read_yaml(meta_path)
+    probe_meta = yaml_util.read_yaml(meta_path)
     try:
         return probe_meta[bid][pid]
     except (KeyError, TypeError):
