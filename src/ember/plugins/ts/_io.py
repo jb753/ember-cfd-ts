@@ -1201,18 +1201,16 @@ class TS3Writer:
                 if isinstance(patch, InletPatch):
                     x = np.ones(patch.shape)
                     # The inlet keeps its prescription as non-reflecting target
-                    # rows, not as the Po/To/Alpha/Beta it was given, so recover
-                    # them by inverting what set_Po_To/set_Alpha/set_Beta did.
-                    # The angles invert without a fluid; the stagnation pair
-                    # needs one, since set_Po_To went (Po, To) -> set_P_T ->
-                    # get_h/get_s and set_h_s is what undoes that.
-                    pp["pitch"] = np.degrees(np.arcsin(patch.sinBeta)) * x
-                    pp["yaw"] = np.degrees(np.arctan(patch.tanAlpha)) * x
+                    # rows, not as the Po/To/Alpha/Beta it was given, so read
+                    # them back through the patch's own properties, which
+                    # invert whatever set_Po_To/set_ho_s/set_Alpha/set_Beta did.
+                    # The angles read back without a fluid; the stagnation pair
+                    # needs one, since Po/To go through set_h_s.
+                    pp["pitch"] = patch.Beta * x
+                    pp["yaw"] = patch.Alpha * x
                     try:
-                        fluid = patch.block.fluid
-                        rhoo_nd, uo_nd = fluid.set_h_s(patch.ho_nd, patch.s_nd)
-                        pp["pstag"] = fluid.get_P(rhoo_nd, uo_nd) * fluid.P_ref * x
-                        pp["tstag"] = fluid.get_T(rhoo_nd, uo_nd) * fluid.T_ref * x
+                        pp["pstag"] = patch.Po * x
+                        pp["tstag"] = patch.To * x
                     except ValueError:
                         # As the flow variables above: omit what a fluid-less
                         # grid cannot express, unless strict demands it.
