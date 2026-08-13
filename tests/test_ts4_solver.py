@@ -511,10 +511,12 @@ def test_read_flow_diverged_density(tmp_path):
 _LOG = """\
 STARTING TS4
 RK LOOP NO: 1
+TOTAL TIME: 1.5e-1
 ROVX DELTA:  1.0e-2
 INLET:  0.5 3.3e5 1.30e5
 OUTLET:  0.51 3.31e5 1.01e5
 RK LOOP NO: 2
+TOTAL TIME: 2.5e-1
 ROVX DELTA:  1.0e-4
 INLET:  0.52 3.3e5 1.30e5
 OUTLET:  0.52 3.31e5 1.02e5
@@ -544,6 +546,19 @@ def test_parse_ts4_log_scales_mass_flow_by_blade_count(tmp_path):
     mdot_ref = fluid.rhoV_ref * grid[0].L_ref**2
     np.testing.assert_allclose(
         hist.mdot_nd[0, 0], 0.5 * 36.0 / mdot_ref, rtol=1e-5
+    )
+
+
+def test_parse_ts4_log_reads_wall_time(tmp_path):
+    """hist.time is the cumulative sum of each step's TOTAL TIME, not the
+    time taken to parse the (already-finished) log."""
+    path = tmp_path / "log_ts4.txt"
+    path.write_text(_LOG)
+
+    hist = parse_ts4_log(str(path), _make_grid(n_block=1))
+
+    np.testing.assert_allclose(
+        hist.time[:2] * hist._TIME_SCALE, [0.15, 0.4], rtol=1e-6
     )
 
 
@@ -675,6 +690,7 @@ _TURBOSTREAM_BODY = {
             f.create_dataset("node_array_turb0", data=np.full(x.size, 2e-3))
 
     print("RK LOOP NO: 1")
+    print("TOTAL TIME: 1.0e-1")
     print("ROVX DELTA:  1.0e-3")
     print("INLET:  0.5 3.3e5 1.30e5")
     print("OUTLET:  0.5 3.3e5 1.01e5")
@@ -727,7 +743,7 @@ def test_run_end_to_end_via_mock_env(tmp_path, monkeypatch):
     """run() drives write -> convert -> execute -> read against mocks."""
     grid = _make_grid()
     env, convert = _write_mock_env(tmp_path)
-    monkeypatch.setattr(ts4_mod, "_CONVERT_SCRIPT", f"{sys.executable} {convert}")
+    monkeypatch.setattr(ts4_mod, "_CONVERT_SCRIPT", str(convert))
 
     cfg = TS4Solver(nstep=100, nstep_avg=20)
     cfg.environment_script = env
@@ -764,7 +780,7 @@ def test_run_diverged_raises(tmp_path, monkeypatch):
     """TS4's own NaN report surfaces as DivergenceError, naming the step."""
     grid = _make_grid()
     env, convert = _write_mock_env(tmp_path, solver_mode="nan")
-    monkeypatch.setattr(ts4_mod, "_CONVERT_SCRIPT", f"{sys.executable} {convert}")
+    monkeypatch.setattr(ts4_mod, "_CONVERT_SCRIPT", str(convert))
 
     cfg = TS4Solver(nstep=100, nstep_avg=20)
     cfg.environment_script = env
@@ -778,7 +794,7 @@ def test_run_rejects_converter_that_merged_nodes(tmp_path, monkeypatch):
     """A conversion that did not preserve nodes fails loudly through run()."""
     grid = _make_grid()
     env, convert = _write_mock_env(tmp_path, convert_mode="merged")
-    monkeypatch.setattr(ts4_mod, "_CONVERT_SCRIPT", f"{sys.executable} {convert}")
+    monkeypatch.setattr(ts4_mod, "_CONVERT_SCRIPT", str(convert))
 
     cfg = TS4Solver(nstep=100, nstep_avg=20)
     cfg.environment_script = env
@@ -798,7 +814,7 @@ def test_run_restores_cwd_on_failure(tmp_path, monkeypatch):
     """A failed run does not strand the process in the working directory."""
     grid = _make_grid()
     env, convert = _write_mock_env(tmp_path, solver_mode="nan")
-    monkeypatch.setattr(ts4_mod, "_CONVERT_SCRIPT", f"{sys.executable} {convert}")
+    monkeypatch.setattr(ts4_mod, "_CONVERT_SCRIPT", str(convert))
 
     cfg = TS4Solver(nstep=100, nstep_avg=20)
     cfg.environment_script = env

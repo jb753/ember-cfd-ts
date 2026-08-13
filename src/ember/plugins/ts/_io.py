@@ -343,12 +343,17 @@ def _collapse_pitch(patch, arr, name):
 
     TS3 stores an inlet prescription over the whole patch face, but a
     non-reflecting patch imposes only the pitchwise mean at each span station
-    and refuses a pitchwise-varying value rather than averaging it silently.
-    Averaging is right *here*, where the file's own convention is known, but a
-    file that genuinely varies along the pitch is losing something in the
-    process, so say so rather than quietly dropping it.
+    (weighted by :attr:`~ember.patch.RevolutionPatch.weight_pitch`, the same
+    average the patch itself uses) and refuses a pitchwise-varying value
+    rather than averaging it silently. Averaging is right *here*, where the
+    file's own convention is known, but a file that genuinely varies along
+    the pitch is losing something in the process, so say so rather than
+    quietly dropping it.
     """
-    mean = np.mean(arr, axis=patch.pitch_dim, keepdims=True)
+    w = patch.weight_pitch
+    if arr.ndim > w.ndim:
+        w = w.reshape(w.shape + (1,) * (arr.ndim - w.ndim))
+    mean = np.sum(arr * w, axis=patch.pitch_dim, keepdims=True)
     spread = float(np.ptp(arr, axis=patch.pitch_dim).max())
     scale = float(np.abs(mean).max())
     if scale > 0.0 and spread > 1e-6 * scale:

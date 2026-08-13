@@ -299,21 +299,21 @@ def test_ts3_multiblock_with_patches_roundtrip(tmp_path):
     # Block 1: x=0 to 0.5
     x1 = np.linspace(0.0, 0.5, 5)
     r1 = np.linspace(0.8, 1.2, 6)
-    t1 = np.linspace(0.0, np.pi / 4, 8)
+    t1 = np.linspace(0.0, 2 * np.pi / 8, 8)  # whole pitch for Nb=8
     xv1, rv1, tv1 = np.meshgrid(x1, r1, t1, indexing="ij")
     xrt1 = np.stack([xv1, rv1, tv1], axis=-1)
 
     # Block 2: x=0.4 to 0.9 (overlapping with block 1)
     x2 = np.linspace(0.4, 0.9, 6)
     r2 = np.linspace(0.8, 1.2, 6)
-    t2 = np.linspace(0.0, np.pi / 4, 8)
+    t2 = np.linspace(0.0, 2 * np.pi / 8, 8)
     xv2, rv2, tv2 = np.meshgrid(x2, r2, t2, indexing="ij")
     xrt2 = np.stack([xv2, rv2, tv2], axis=-1)
 
     # Block 3: x=0.8 to 1.3 (overlapping with block 2)
     x3 = np.linspace(0.8, 1.3, 5)
     r3 = np.linspace(0.8, 1.2, 6)
-    t3 = np.linspace(0.0, np.pi / 4, 8)
+    t3 = np.linspace(0.0, 2 * np.pi / 8, 8)
     xv3, rv3, tv3 = np.meshgrid(x3, r3, t3, indexing="ij")
     xrt3 = np.stack([xv3, rv3, tv3], axis=-1)
 
@@ -353,17 +353,18 @@ def test_ts3_multiblock_with_patches_roundtrip(tmp_path):
         block.set_conserved(conserved)
         block.set_wdist(np.ones(block.shape, dtype=np.float32) * 0.001)
 
-    # Add inlet patch to block 1 (i=0 face)
-    # Spans the whole face: a non-reflecting inlet must cover a whole pitch.
-    inlet_patch = InletPatch(i=0, j=(0, -1), k=(0, -1), label="inlet")
-    # Attach first: the setters convert against the block's fluid.
+    # Add inlet patch to block 1 (i=0 face). The pitch (k) range must cover
+    # the whole blade pitch, per NonReflectingPatch._calc_hilbert, so only the
+    # span (j) range is a partial slice. Attach first: the setters convert
+    # against the block's fluid.
+    inlet_patch = InletPatch(i=0, j=(1, 5), k=(0, 7), label="inlet")
     block1.patches.append(inlet_patch)
     inlet_patch.set_Po_To(Po=101325.0, To=288.15)  # Total pressure (Pa), temp (K)
     inlet_patch.set_Alpha(0.0)  # Yaw angle
     inlet_patch.set_Beta(15.0)  # Pitch angle (degrees)
 
     # Add outlet patch to block 3 (i=-1 face)
-    outlet_patch = OutletPatch(i=-1, j=(0, -1), k=(0, -1), label="outlet")
+    outlet_patch = OutletPatch(i=-1, j=(1, 5), k=(0, 7), label="outlet")
     block3.patches.append(outlet_patch)
     outlet_patch.set_P(120000.0)  # Static pressure (Pa)
 
@@ -451,24 +452,18 @@ def test_ts3_multiblock_with_patches_roundtrip(tmp_path):
     assert len(periodic_patches_b3) == 2, "Block 3 should have 2 periodic patches"
 
     # Verify inlet patch properties were preserved
-    # The inlet holds its prescription as non-reflecting target rows, so compare
-    # those: ho_nd/s_nd carry what Po/To were converted into, sinBeta the pitch.
+    # The inlet holds its prescription as non-reflecting target rows, so read
+    # it back through Po/To/Beta, which invert whatever set_Po_To/set_Beta did.
     recon_inlet = inlet_patches[0]
     np.testing.assert_allclose(
-        recon_inlet.ho_nd,
-        inlet_patch.ho_nd,
-        rtol=1e-5,
-        err_msg="Inlet stagnation enthalpy not preserved",
+        recon_inlet.Po, inlet_patch.Po, rtol=1e-5, err_msg="Inlet Po not preserved"
     )
     np.testing.assert_allclose(
-        recon_inlet.s_nd,
-        inlet_patch.s_nd,
-        rtol=1e-5,
-        err_msg="Inlet entropy not preserved",
+        recon_inlet.To, inlet_patch.To, rtol=1e-5, err_msg="Inlet To not preserved"
     )
     np.testing.assert_allclose(
-        recon_inlet.sinBeta,
-        inlet_patch.sinBeta,
+        recon_inlet.Beta,
+        inlet_patch.Beta,
         rtol=1e-5,
         err_msg="Inlet pitch angle not preserved",
     )
@@ -477,8 +472,8 @@ def test_ts3_multiblock_with_patches_roundtrip(tmp_path):
     # As the inlet above, the prescription survives as a target row.
     recon_outlet = outlet_patches[0]
     np.testing.assert_allclose(
-        recon_outlet.P_nd,
-        outlet_patch.P_nd,
+        recon_outlet.P,
+        outlet_patch.P,
         rtol=1e-5,
         err_msg="Outlet pressure not preserved",
     )

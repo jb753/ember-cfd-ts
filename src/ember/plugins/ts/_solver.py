@@ -98,7 +98,7 @@ class TS3Solver(BaseSolver):
     sfin: float = 0.5
     """Proportion of second-order smoothing, increase for more stability."""
 
-    rfin: float = 0.5
+    rfin: float = 0.2
     """Inlet relaxation factor, reduce for low-Mach flows."""
 
     av: dict = None

@@ -42,11 +42,17 @@ namespaces = true
 [tool.uv]
 managed = true
 
-# A local convenience only, for developing against the sibling ember working
-# copy. The version bound in [project.dependencies] is the truth of record: it
-# is what pip, and therefore Read the Docs, resolves. `uv sync --no-sources`
-# ignores this table and reproduces exactly what a user gets, so the declared
-# bound can be checked for honesty.
+# Develop against the sibling ember working copy rather than the published
+# release: this plugin tracks core APIs (Grid alignment, Block/patch accessors)
+# ahead of what is on PyPI.
+#
+# A plain relative path, not `workspace = true`: this package must resolve
+# standalone (checked out beside a sibling `../ember`) as well as nested
+# under the ember-paper superproject (which checks the two out as siblings
+# too). A path source needs no workspace membership on either side, so it
+# works unchanged in both layouts. It must also NOT declare its own
+# [tool.uv.workspace] table -- that would make uv treat it as a nested
+# workspace root and refuse to resolve under the superproject's workspace.
 [tool.uv.sources]
 ember-cfd = { path = "../ember", editable = true }
 
