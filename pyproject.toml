@@ -16,12 +16,11 @@ classifiers = [
 # Follows SPEC 0's Python support window: https://scientific-python.org/specs/spec-0000/
 requires-python = ">=3.12"
 dependencies = [
-    # Tracks core's dev branch, not a release: this plugin needs the post-0.1.0
-    # patch API (non-reflecting inlets, the OutletPatch.Kp/Ki accessors) that no
-    # published version carries yet. Temporary, and deliberately so -- a direct
-    # URL dependency cannot be uploaded to PyPI, so this must become a version
-    # bound (>=0.2.0,<0.3) when core next releases.
-    "ember-cfd @ git+https://github.com/jb753/ember@dev",
+    # Exact pin, as turbigen pins it: until 1.0.0 a minor release may break
+    # the public API. 0.4.6 carries everything this plugin uses -- the
+    # dP_throttle convergence field, NonMatchPatch and CuspPatch, and
+    # BaseSolver.soft/restart with run(grid, workdir).
+    "ember-cfd==0.4.6",
     "h5py~=3.16.0",
     "numpy~=2.5.0",
     "pyyaml~=6.0.3",
@@ -42,25 +41,12 @@ namespaces = true
 [tool.uv]
 managed = true
 
-# Develop against the sibling ember working copy rather than the published
-# release: this plugin tracks core APIs (Grid alignment, Block/patch accessors)
-# ahead of what is on PyPI.
-#
-# `workspace = true` here relies on this package and `../ember` both being
-# uv workspace members -- true whenever this submodule is checked out under
-# the ember-paper superproject, which declares both as members in its root
-# pyproject.toml. This package has no standalone (non-workspace) uv project
-# of its own, so `uv sync`/`uv lock` require that superproject; a path source
-# instead (e.g. `{ path = "../ember", editable = true }`) looks tempting for
-# standalone dev, but uv rejects it outright once this package is checked out
-# as a workspace member -- confirmed by trying it, not merely asserted. A
-# real build (`pip install .`, `uv build`) is unaffected either way: it
-# resolves purely from [project.dependencies], never from this table. This
-# package must also NOT declare its own [tool.uv.workspace] table: uv treats
-# that as a nested workspace root and refuses to resolve it under the
-# superproject's workspace.
-[tool.uv.sources]
-ember-cfd = { workspace = true }
+# No [tool.uv.sources]: ember-cfd comes from PyPI at the pinned release. A
+# superproject that develops against an ember working copy declares that
+# source in its own root, which applies to every workspace member. This
+# package must NOT declare its own [tool.uv.workspace] table: uv treats that
+# as a nested workspace root and refuses to resolve it under a superproject's
+# workspace.
 
 [dependency-groups]
 dev = [

@@ -122,7 +122,7 @@ def parse_ts4_log(filename, grid):
             s=s,
             mdot_target=np.nan,
             mdot_throttle=np.nan,
-            P_throttle=np.nan,
+            dP_throttle=np.nan,
             dP_P=np.nan,
             dP_I=np.nan,
             dP_D=np.nan,

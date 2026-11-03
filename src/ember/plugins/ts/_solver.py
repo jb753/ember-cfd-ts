@@ -1,5 +1,5 @@
 import logging
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from timeit import default_timer as timer
 from glob import glob
 import subprocess
@@ -12,16 +12,18 @@ import re
 from ember.grid import DivergenceError
 from ember.solver import BaseSolver
 from ember.plugins.ts._io import TS3Writer, read_conserved, read_mu_turb
-from ember.plugins.ts._convergence import parse_ts3_log
+from ember.plugins.ts._convergence import THROTTLE_RE, parse_ts3_log
 from ember.plugins.ts._log import archive_log
 
 logger = logging.getLogger("ember")
 
-# TS3 application variables that TS3Solver exposes as a typed field of the same
-# name. This is a deliberately hand-maintained *mirror* of a subset of the
-# dataclass fields below: every entry must be (a) an actual TS3Solver field, so
-# `getattr(cfg, name)` in _write_input resolves, and (b) a name the writer
-# accepts as an application variable. It duplicates those field names on
+# TS3 application variables that TS3Solver exposes as a typed field, mapped to
+# that field: the same name, except the step counts, named as ember's own
+# solver names them so either is configured alike. This is a deliberately
+# hand-maintained *mirror* of a subset of the dataclass fields below: every
+# value must be (a) an actual TS3Solver field, so `getattr(cfg, field)` in
+# _write_input resolves, and every key (b) a name the writer accepts as an
+# application variable. It duplicates those field names on
 # purpose -- keeping the forwarding surface greppable in one place rather than
 # deriving it from `fields(TS3Solver)` via metadata -- so the standing cost is
 # that adding a typed av field means adding its name here too (and a typo here
@@ -29,25 +31,23 @@ logger = logging.getLogger("ember")
 # the values via writer.set_av) and by _check_overlap (to reject raw av
 # overrides that collide with a non-default typed field). _BV_FIELDS is the same
 # idea for block variables.
-_AV_FIELDS = frozenset(
-    {
-        "cfl",
-        "dampin",
-        "facsecin",
-        "ilos",
-        "nchange",
-        "viscosity_law",
-        "nstep",
-        "rfmix",
-        "sfin",
-    }
-)
+_AV_FIELDS = {
+    "cfl": "cfl",
+    "dampin": "dampin",
+    "facsecin": "facsecin",
+    "ilos": "ilos",
+    "nchange": "nchange",
+    "viscosity_law": "viscosity_law",
+    "nstep": "n_step",
+    "rfmix": "rfmix",
+    "sfin": "sfin",
+}
 # Block variables with a typed field (see the _AV_FIELDS note above); currently
 # just the multigrid factor. Forwarded via writer.set_bv per block.
 _BV_FIELDS = frozenset({"fmgrid"})
 
 
-@dataclass
+@dataclass(frozen=True)
 class TS3Solver(BaseSolver):
     """Run Turbostream 3 through the uniform :class:`ember.solver.BaseSolver` interface.
 
@@ -57,10 +57,7 @@ class TS3Solver(BaseSolver):
     solver, and read the solution back into the grid in place.
     """
 
-    workdir: Path = None
-    """Working directory to run the simulation in. Must be set before ``run``."""
-
-    environment_script: Path = Path(
+    environment_script: str = (
         "/usr/local/software/turbostream/ts3610_a100/bashrc_module_ts3610_a100"
     )
     """Setup environment shell script to be sourced before running."""
@@ -86,11 +83,11 @@ class TS3Solver(BaseSolver):
     viscosity_law: int = 0
     """Variation of viscosity with temperature, 0 for constant, 1 for 0.62 power law."""
 
-    nstep: int = 10000
+    n_step: int = 10000
     """Number of time steps."""
 
-    nstep_avg: int = 5000
-    """Average over the last `nstep_avg` steps of the calculation."""
+    n_step_avg: int = 5000
+    """Average over the last `n_step_avg` steps of the calculation."""
 
     rfmix: float = 0.0
     """Mixing plane relaxation factor."""
@@ -101,28 +98,52 @@ class TS3Solver(BaseSolver):
     rfin: float = 0.2
     """Inlet relaxation factor, reduce for low-Mach flows."""
 
-    av: dict = None
+    av: dict | None = None
     """Raw application-variable overrides, ``av[name] = value``, for any TS3
     variable without a typed field. Applied after the typed fields; setting a
     name that is also driven by a non-default typed field is an error."""
 
-    bv: dict = None
+    bv: dict | None = None
     """Raw block-variable overrides, ``bv[bid][name] = value``, for any TS3
     variable without a typed field. Applied after the typed fields; setting a
     name that is also driven by a non-default typed field is an error."""
 
-    def __post_init__(self):
-        if isinstance(self.workdir, str):
-            self.workdir = Path(self.workdir)
-        if isinstance(self.environment_script, str):
-            self.environment_script = Path(self.environment_script)
+    def soft(self):
+        """Return a copy detuned for a robust start; see :meth:`BaseSolver.soft`.
 
-    def run(self, grid):
-        """Write, run, and read TS3 for ``grid``, updating it in place.
+        Each setting moves the way its docstring says buys stability, and none
+        is moved past where it already is, so a solver already configured more
+        conservatively than this keeps its own value. Averaging is cut to the
+        last step: a soft run's field is only ever an initial guess.
+        """
+        return replace(
+            self,
+            cfl=min(self.cfl, 0.3),
+            dampin=min(self.dampin, 10.0),
+            facsecin=max(self.facsecin, 0.01),
+            fmgrid=min(self.fmgrid, 0.1),
+            sfin=max(self.sfin, 1.0),
+            n_step_avg=1,
+        )
+
+    def restart(self):
+        """Return a copy without the start-up ramp; see :meth:`BaseSolver.restart`.
+
+        Over its first `nchange` steps TS3 ramps smoothing and damping in from
+        heavier values than `facsecin` and `dampin`. From a converged field
+        that moves the solution, and the march takes many times `nchange` to
+        come back.
+        """
+        return replace(self, nchange=0)
+
+    def run(self, grid, workdir=None):
+        """Write, run, and read TS3 for ``grid`` in ``workdir``, updating it in
+        place.
 
         Advances ``grid`` in place with the solved flow field and returns the
         convergence history parsed from the TS3 log (``None`` if the log could
-        not be parsed). ``workdir`` must be set on the config.
+        not be parsed). ``workdir`` is the directory this run writes its input,
+        output and log in, made if it does not exist; it must be given.
 
         Raises
         ------
@@ -130,17 +151,18 @@ class TS3Solver(BaseSolver):
             If the solver diverged (NaN in the log, or a non-physical solution
             on read-back).
         """
-        if self.workdir is None:
-            raise ValueError("TS3Solver.workdir must be set before run().")
-        if not self.workdir.exists():
-            self.workdir.mkdir(parents=True, exist_ok=True)
+        if workdir is None:
+            raise ValueError("TS3Solver.run() needs a workdir to run in.")
+        workdir = Path(workdir)
+        workdir.mkdir(parents=True, exist_ok=True)
 
         # Archive any existing log so every run in this workdir keeps its own
         # (e.g. one per full-multigrid level), rather than clobbering it.
-        archive_log(self.workdir)
-        log_path = os.path.join(self.workdir, "log.txt")
+        archive_log(workdir)
+        log_path = os.path.join(workdir, "log.txt")
 
-        _run(grid, self)
+        _run(grid, self, workdir)
+        _read_throttle(grid, log_path)
 
         # Build the convergence history from the log. The reference scales
         # (V_ref, T_ref, areas) are derived from the solved grid, which the log
@@ -159,14 +181,14 @@ _LOG_TIMEOUT_S = 60
 _POLL_INTERVAL_S = 10
 
 
-def _execute(ts3_config):
+def _execute(ts3_config, workdir):
     """Using a given configuration, execute TS3."""
 
     # Store old working directory and change to this config's. The finally below
     # restores it on every exit path (timeout, divergence, non-zero return code),
     # so a failed run does not leave the process stranded in the work directory.
     old_workdir = os.getcwd()
-    os.chdir(ts3_config.workdir)
+    os.chdir(workdir)
 
     try:
         if not os.path.exists(ts3_config.environment_script):
@@ -255,7 +277,41 @@ Check that Turbostream is available and runnable on this node."""
         os.chdir(old_workdir)
 
 
-def _read_hdf5(grid, ts3_config):
+def _read_throttle(grid, log_path):
+    """Put where TS3's throttle settled on the grid's throttled outlet.
+
+    TS3 keeps its throttle's state out of its output file, so the read-back
+    leaves the outlet at the pressure it started from; the log's last throttle
+    block has the rest. The outlet is set to that pressure plus the final
+    correction, so a further run starts from it, with the mass flow last
+    measured and the error sum that makes ember's own correction nothing, so
+    :attr:`~ember.patch.OutletPatch.P_throttle` is the settled pressure.
+    """
+    throttled = [p for p in grid.patches.outlet if p.mdot_target is not None]
+    if not throttled:
+        return
+    (patch,) = throttled
+
+    with open(log_path) as f:
+        blocks = THROTTLE_RE.findall(f.read())
+    if not blocks:
+        logger.warning(f"The throttled TS3 run left no throttle state in {log_path}.")
+        return
+    _, current, *_, dP = map(float, blocks[-1])
+
+    patch.set_P(float(patch._P_raw) + dP)
+    # ember's controller state, which TS3 ran in its place: the measured flow
+    # per passage, and the error sum cancelling its proportional correction.
+    patch._mdot = current / patch.block.Nb
+    eps = patch._mdot / patch.mdot_target - 1.0
+    patch._eps_int = -patch.Kp * eps / patch.Ki if patch.Ki else 0.0
+    logger.info(
+        f"TS3 throttle settled at exit P={float(patch._P_raw):.5g} Pa, a "
+        f"correction of {dP:+.5g} Pa, at mdot={current:.5g} kg/s."
+    )
+
+
+def _read_hdf5(grid, ts3_config, workdir):
     """Using a given configuration, load flow solution and insert into grid.
 
     The averaged flow field is read from ``output_avg.hdf5`` and the turbulent
@@ -264,8 +320,8 @@ def _read_hdf5(grid, ts3_config):
     :class:`~ember.grid.DivergenceError`.
     """
 
-    output_file_path = os.path.join(ts3_config.workdir, "output_avg.hdf5")
-    output_inst_file_path = os.path.join(ts3_config.workdir, "output.hdf5")
+    output_file_path = os.path.join(workdir, "output_avg.hdf5")
+    output_inst_file_path = os.path.join(workdir, "output.hdf5")
     if not os.path.exists(output_file_path):
         raise Exception(f"""No Turbostream output file found at: {output_file_path}""")
 
@@ -300,7 +356,8 @@ def _check_overlap(ts3_config):
     av = ts3_config.av or {}
     bv = ts3_config.bv or {}
 
-    av_clash = _non_default_fields(ts3_config, _AV_FIELDS) & av.keys()
+    moved = _non_default_fields(ts3_config, _AV_FIELDS.values())
+    av_clash = {name for name, f in _AV_FIELDS.items() if f in moved} & av.keys()
     if av_clash:
         raise ValueError(
             f"av override(s) {sorted(av_clash)} also set by a non-default typed "
@@ -317,7 +374,7 @@ def _check_overlap(ts3_config):
             )
 
 
-def _write_input(grid, ts3_config):
+def _write_input(grid, ts3_config, workdir):
     """Write the TS3 input file from an ember grid + config via the writer.
 
     Drives :class:`~ember.plugins.ts.TS3Writer` so the solver's typed fields and
@@ -338,11 +395,11 @@ def _write_input(grid, ts3_config):
     writer.get(grid, strict=True)
 
     # Typed application variables (forwarded by matching name).
-    writer.set_av(**{name: getattr(ts3_config, name) for name in _AV_FIELDS})
+    writer.set_av(**{name: getattr(ts3_config, f) for name, f in _AV_FIELDS.items()})
 
     # Derived application variables.
     writer.set_av(
-        nstep_save_start=ts3_config.nstep - ts3_config.nstep_avg,
+        nstep_save_start=ts3_config.n_step - ts3_config.n_step_avg,
         restart=1,
     )
 
@@ -366,17 +423,17 @@ def _write_input(grid, ts3_config):
         writer.set_bv(bid, **block_bv)
 
     writer.check()
-    input_path = os.path.join(ts3_config.workdir, "input.hdf5")
+    input_path = os.path.join(workdir, "input.hdf5")
     writer.write(input_path)
     writer.write_probe_meta(input_path)
 
 
-def _run(grid, ts3_config):
+def _run(grid, ts3_config, workdir):
     """Perform all steps on a grid and config."""
 
-    _write_input(grid, ts3_config)
-    _execute(ts3_config)
-    _read_hdf5(grid, ts3_config)
+    _write_input(grid, ts3_config, workdir)
+    _execute(ts3_config, workdir)
+    _read_hdf5(grid, ts3_config, workdir)
 
 
 # Live-divergence detection during a run reads only these two patterns;

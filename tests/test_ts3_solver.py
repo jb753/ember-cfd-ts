@@ -93,7 +93,7 @@ def test_config_instantiation_defaults():
     cfg = TS3Solver()
     assert cfg.cfl == 0.4
     assert cfg.ilos == 2
-    assert cfg.nstep == 10000
+    assert cfg.n_step == 10000
 
 
 def _av(f, name):
@@ -108,9 +108,8 @@ def _bv(f, bid, name):
 
 def test_write_input_av_bv_roundtrip(tmp_path):
     """_write_input forwards typed and derived av/bv into input.hdf5."""
-    cfg = TS3Solver(nstep=8000, nstep_avg=2000, cfl=0.35, fmgrid=0.15)
-    cfg.workdir = tmp_path
-    ts3_mod._write_input(_make_grid_with_inlet(), cfg)
+    cfg = TS3Solver(n_step=8000, n_step_avg=2000, cfl=0.35, fmgrid=0.15)
+    ts3_mod._write_input(_make_grid_with_inlet(), cfg, tmp_path)
 
     with h5py.File(tmp_path / "input.hdf5", "r") as f:
         assert _av(f, "cfl") == pytest.approx(0.35)
@@ -123,8 +122,7 @@ def test_write_input_av_bv_roundtrip(tmp_path):
 def test_write_input_rfin_pv(tmp_path):
     """rfin is applied to inlet patches as a patch variable."""
     cfg = TS3Solver(rfin=0.25)
-    cfg.workdir = tmp_path
-    ts3_mod._write_input(_make_grid_with_inlet(), cfg)
+    ts3_mod._write_input(_make_grid_with_inlet(), cfg, tmp_path)
 
     with h5py.File(tmp_path / "input.hdf5", "r") as f:
         # Inlet is patch0 (rotating patches excluded; none here).
@@ -135,8 +133,7 @@ def test_write_input_rfin_pv(tmp_path):
 def test_write_input_raw_av_override(tmp_path):
     """A raw av override with no typed field lands in the file."""
     cfg = TS3Solver(av={"sfin_sa": 0.1})
-    cfg.workdir = tmp_path
-    ts3_mod._write_input(_make_grid_with_inlet(), cfg)
+    ts3_mod._write_input(_make_grid_with_inlet(), cfg, tmp_path)
 
     with h5py.File(tmp_path / "input.hdf5", "r") as f:
         assert _av(f, "sfin_sa") == pytest.approx(0.1)
@@ -145,8 +142,7 @@ def test_write_input_raw_av_override(tmp_path):
 def test_write_input_raw_bv_override(tmp_path):
     """A raw bv override with no typed field lands in the file."""
     cfg = TS3Solver(bv={0: {"free_turb": 0.02}})
-    cfg.workdir = tmp_path
-    ts3_mod._write_input(_make_grid_with_inlet(), cfg)
+    ts3_mod._write_input(_make_grid_with_inlet(), cfg, tmp_path)
 
     with h5py.File(tmp_path / "input.hdf5", "r") as f:
         assert _bv(f, 0, "free_turb") == pytest.approx(0.02)
@@ -155,36 +151,32 @@ def test_write_input_raw_bv_override(tmp_path):
 def test_write_input_av_overlap_errors(tmp_path):
     """A raw av override colliding with a non-default typed field errors."""
     cfg = TS3Solver(cfl=0.2, av={"cfl": 0.3})
-    cfg.workdir = tmp_path
     with pytest.raises(ValueError, match="cfl"):
-        ts3_mod._write_input(_make_grid_with_inlet(), cfg)
+        ts3_mod._write_input(_make_grid_with_inlet(), cfg, tmp_path)
 
 
 def test_write_input_bv_overlap_errors(tmp_path):
     """A raw bv override colliding with a non-default typed field errors."""
     cfg = TS3Solver(fmgrid=0.1, bv={0: {"fmgrid": 0.0}})
-    cfg.workdir = tmp_path
     with pytest.raises(ValueError, match="fmgrid"):
-        ts3_mod._write_input(_make_grid_with_inlet(), cfg)
+        ts3_mod._write_input(_make_grid_with_inlet(), cfg, tmp_path)
 
 
 def test_write_input_av_overlap_ok_when_default(tmp_path):
     """An av override matching a typed field at its default is allowed."""
     # cfl left at its default, so the av dict is the sole source.
     cfg = TS3Solver(av={"cfl": 0.3})
-    cfg.workdir = tmp_path
-    ts3_mod._write_input(_make_grid_with_inlet(), cfg)
+    ts3_mod._write_input(_make_grid_with_inlet(), cfg, tmp_path)
     with h5py.File(tmp_path / "input.hdf5", "r") as f:
         assert _av(f, "cfl") == pytest.approx(0.3)
 
 
 def test_run_writes_input(tmp_path, monkeypatch):
     """_run writes input.hdf5 (no longer raising NotImplementedError)."""
-    monkeypatch.setattr(ts3_mod, "_execute", lambda cfg: None)
-    monkeypatch.setattr(ts3_mod, "_read_hdf5", lambda grid, cfg: None)
+    monkeypatch.setattr(ts3_mod, "_execute", lambda cfg, workdir: None)
+    monkeypatch.setattr(ts3_mod, "_read_hdf5", lambda grid, cfg, workdir: None)
     cfg = TS3Solver()
-    cfg.workdir = tmp_path
-    ts3_mod._run(_make_grid_with_inlet(), cfg)
+    ts3_mod._run(_make_grid_with_inlet(), cfg, tmp_path)
     assert (tmp_path / "input.hdf5").exists()
 
 
@@ -203,8 +195,7 @@ def test_read_hdf5_roundtrip(tmp_path):
     target[0].set_P_T(np.full(target[0].shape, 1e5), np.full(target[0].shape, 300.0))
 
     cfg = TS3Solver()
-    cfg.workdir = tmp_path
-    ts3_mod._read_hdf5(target, cfg)
+    ts3_mod._read_hdf5(target, cfg, tmp_path)
 
     np.testing.assert_allclose(target[0].P, P, rtol=1e-4)
     np.testing.assert_allclose(target[0].T, T, rtol=1e-4)
@@ -220,17 +211,15 @@ def test_read_hdf5_diverged_raises_convergence_error(tmp_path):
         ro[...] = -np.abs(ro[...]) - 1.0
 
     cfg = TS3Solver()
-    cfg.workdir = tmp_path
     with pytest.raises(DivergenceError):
-        ts3_mod._read_hdf5(_make_solved_grid(), cfg)
+        ts3_mod._read_hdf5(_make_solved_grid(), cfg, tmp_path)
 
 
 def test_read_hdf5_missing_output_raises(tmp_path):
     """No output file present raises a clear error."""
     cfg = TS3Solver()
-    cfg.workdir = tmp_path
     with pytest.raises(Exception, match="No Turbostream output file"):
-        ts3_mod._read_hdf5(_make_solved_grid(), cfg)
+        ts3_mod._read_hdf5(_make_solved_grid(), cfg, tmp_path)
 
 
 def test_convergence_history_from_log():
@@ -336,11 +325,9 @@ def test_run_end_to_end_via_mock_env(tmp_path):
     grid = _make_grid_with_inlet()
     P, T, Vx = grid[0].P.copy(), grid[0].T.copy(), grid[0].Vx.copy()
 
-    cfg = TS3Solver(nstep=8000, nstep_avg=2000)
-    cfg.environment_script = _write_mock_env(tmp_path, "happy")
-    cfg.workdir = tmp_path
+    cfg = TS3Solver(n_step=8000, n_step_avg=2000, environment_script=str(_write_mock_env(tmp_path, "happy")))
 
-    ts3_mod._run(grid, cfg)
+    ts3_mod._run(grid, cfg, tmp_path)
 
     # The real subprocess ran: it produced the output and _execute removed input.
     assert (tmp_path / "log.txt").exists()
@@ -359,26 +346,22 @@ def test_execute_nan_raises_convergence_error(tmp_path, monkeypatch):
     # production interval (the real loop, including proc.wait, is still exercised).
     monkeypatch.setattr(ts3_mod, "_POLL_INTERVAL_S", 0.02)
 
-    cfg = TS3Solver()
-    cfg.environment_script = _write_mock_env(tmp_path, "nan")
-    cfg.workdir = tmp_path
+    cfg = TS3Solver(environment_script=str(_write_mock_env(tmp_path, "nan")))
 
     cwd_before = os.getcwd()
     with pytest.raises(DivergenceError, match="step 5"):
-        ts3_mod._execute(cfg)
+        ts3_mod._execute(cfg, tmp_path)
     # The try/finally in _execute restores the working directory on the error path.
     assert os.getcwd() == cwd_before
 
 
 def test_run_diverged_solution_raises(tmp_path):
     """A clean exit with a non-physical output raises DivergenceError on read."""
-    cfg = TS3Solver()
-    cfg.environment_script = _write_mock_env(tmp_path, "diverged")
-    cfg.workdir = tmp_path
+    cfg = TS3Solver(environment_script=str(_write_mock_env(tmp_path, "diverged")))
 
     cwd_before = os.getcwd()
     with pytest.raises(DivergenceError):
-        ts3_mod._run(_make_grid_with_inlet(), cfg)
+        ts3_mod._run(_make_grid_with_inlet(), cfg, tmp_path)
     assert os.getcwd() == cwd_before
 
 
@@ -412,12 +395,33 @@ def test_archive_log_increments_suffix(tmp_path):
 def test_run_keeps_a_log_per_run(tmp_path):
     """run() archives the previous log, so two runs in one workdir keep both."""
     grid = _make_grid_with_inlet()
-    cfg = TS3Solver()
-    cfg.environment_script = _write_mock_env(tmp_path, "happy")
-    cfg.workdir = tmp_path
+    cfg = TS3Solver(environment_script=str(_write_mock_env(tmp_path, "happy")))
 
-    cfg.run(grid)  # writes log.txt
-    cfg.run(grid)  # archives the previous log -> log_000.txt, writes a fresh log.txt
+    cfg.run(grid, tmp_path)  # writes log.txt
+    cfg.run(grid, tmp_path)  # archives the previous log -> log_000.txt, writes a fresh log.txt
 
     assert (tmp_path / "log.txt").exists()
     assert (tmp_path / "log_000.txt").exists()
+
+
+def test_soft_detunes_a_copy():
+    solver = TS3Solver()
+    soft = solver.soft()
+    assert soft is not solver and solver.cfl == 0.4
+    assert soft.cfl < solver.cfl and soft.fmgrid < solver.fmgrid
+    assert soft.dampin < solver.dampin and soft.facsecin > solver.facsecin
+    assert soft.n_step == solver.n_step
+
+
+def test_restart_drops_only_the_start_up_ramp():
+    solver = TS3Solver(nchange=2000)
+    restart = solver.restart()
+    assert restart is not solver and solver.nchange == 2000
+    assert restart.nchange == 0
+    assert TS3Solver(nchange=0) == restart
+
+
+def test_soft_keeps_settings_already_more_robust():
+    solver = TS3Solver(cfl=0.1, fmgrid=0.0)
+    soft = solver.soft()
+    assert soft.cfl == 0.1 and soft.fmgrid == 0.0

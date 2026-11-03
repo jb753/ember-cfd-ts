@@ -15,7 +15,7 @@ import re
 import signal
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -42,7 +42,7 @@ _CONVERT_SCRIPT = os.path.join(
 )
 
 
-@dataclass
+@dataclass(frozen=True)
 class TS4Solver(BaseSolver):
     """Run Turbostream 4 through the uniform :class:`ember.solver.BaseSolver` interface.
 
@@ -56,10 +56,7 @@ class TS4Solver(BaseSolver):
     an initial guess.
     """
 
-    workdir: Path = None
-    """Working directory to run the simulation in. Must be set before ``run``."""
-
-    environment_script: Path = Path(
+    environment_script: str = (
         "/usr/local/software/turbostream/ts42111/bashrc_module_ts42111_a100"
     )
     """Setup environment shell script to be sourced before running."""
@@ -143,18 +140,29 @@ class TS4Solver(BaseSolver):
     """Raw ``.ofp`` overrides for any TS4 variable without a typed field.
     Applied last, after the typed fields and the grid-derived properties."""
 
-    def __post_init__(self):
-        if isinstance(self.workdir, str):
-            self.workdir = Path(self.workdir)
-        if isinstance(self.environment_script, str):
-            self.environment_script = Path(self.environment_script)
+    def soft(self):
+        """Return a copy detuned for a robust start; see :meth:`BaseSolver.soft`.
 
-    def run(self, grid):
-        """Write, run, and read TS4 for ``grid``, updating it in place.
+        A smaller time step and more fourth-order smoothing, neither moved past
+        where it already is, so a solver already configured more
+        conservatively than this keeps its own value. Averaging is cut to the
+        last step: a soft run's field is only ever an initial guess.
+        """
+        return replace(
+            self,
+            cfl=min(self.cfl, 5.0),
+            kappa4=max(self.kappa4, 1.0 / 64.0),
+            nstep_avg=1,
+        )
+
+    def run(self, grid, workdir=None):
+        """Write, run, and read TS4 for ``grid`` in ``workdir``, updating it in
+        place.
 
         Advances ``grid`` in place with the solved flow field and returns the
         convergence history parsed from the TS4 log (``None`` if the log could
-        not be parsed). ``workdir`` must be set on the config.
+        not be parsed). ``workdir`` is the directory this run writes its input,
+        output and log in, made if it does not exist; it must be given.
 
         Raises
         ------
@@ -162,21 +170,21 @@ class TS4Solver(BaseSolver):
             If the solver diverged (NaN reported in the log, or a non-physical
             solution on read-back).
         """
-        if self.workdir is None:
-            raise ValueError("TS4Solver.workdir must be set before run().")
-        if not self.workdir.exists():
-            self.workdir.mkdir(parents=True, exist_ok=True)
+        if workdir is None:
+            raise ValueError("TS4Solver.run() needs a workdir to run in.")
+        workdir = Path(workdir)
+        workdir.mkdir(parents=True, exist_ok=True)
 
         # Archive any existing log so successive runs in one workdir each keep
         # their own, rather than clobbering it.
-        archive_log(self.workdir, LOG_NAME)
-        log_path = os.path.join(self.workdir, LOG_NAME)
+        archive_log(workdir, LOG_NAME)
+        log_path = os.path.join(workdir, LOG_NAME)
 
-        _write_input(grid, self)
-        _convert(self)
-        _write_converted_input(grid, self)
-        _execute(self)
-        _read_output(grid, self)
+        _write_input(grid, self, workdir)
+        _convert(self, workdir)
+        _write_converted_input(grid, self, workdir)
+        _execute(self, workdir)
+        _read_output(grid, self, workdir)
 
         try:
             return parse_ts4_log(log_path, grid)
@@ -186,23 +194,23 @@ class TS4Solver(BaseSolver):
             return None
 
 
-def _write_input(grid, config):
+def _write_input(grid, config, workdir):
     """Write the TS3-format input and the ``.ofp`` configuration."""
-    _io_ts4.write_ts3_input(grid, os.path.join(config.workdir, "input.hdf5"))
+    _io_ts4.write_ts3_input(grid, os.path.join(workdir, "input.hdf5"))
 
     conf = _io_ts4.config_from_grid(config, grid)
     conf.update(config.ofp or {})
-    _io_ts4.write_ofp(os.path.join(config.workdir, "config.ofp"), conf)
+    _io_ts4.write_ofp(os.path.join(workdir, "config.ofp"), conf)
 
 
-def _write_converted_input(grid, config):
+def _write_converted_input(grid, config, workdir):
     """Add the fields the conversion cannot supply to the TS4 input file."""
-    input_path = os.path.join(config.workdir, "input_ts4.hdf5")
+    input_path = os.path.join(workdir, "input_ts4.hdf5")
 
-    _io_ts4.write_throttle(config, grid, input_path, config.workdir)
+    _io_ts4.write_throttle(config, grid, input_path, workdir)
     _io_ts4.write_wall_distance(grid, input_path)
 
-    _io_ts4.write_probes_ofp(config.workdir)
+    _io_ts4.write_probes_ofp(workdir)
     for probe in config.point_probe or []:
         xyz = np.asarray(probe["xyz"]).T
         if xyz.ndim != 2 or xyz.shape[0] != 3:
@@ -210,11 +218,11 @@ def _write_converted_input(grid, config):
                 f"Point probe {probe.get('label')!r} needs xyz of shape (n, 3)"
             )
         _io_ts4.write_point_probe(
-            config, config.workdir, xyz, int(probe["domain"]), probe["label"]
+            config, workdir, xyz, int(probe["domain"]), probe["label"]
         )
     for probe in config.logical_probe or []:
-        _io_ts4.write_logical_probe(config, config.workdir, **probe)
-    _io_ts4.check_probes(config.workdir)
+        _io_ts4.write_logical_probe(config, workdir, **probe)
+    _io_ts4.check_probes(workdir)
 
 
 def _check_environment_script(config):
@@ -229,10 +237,10 @@ solver installed and that you have access to the Turbostream installation.
         )
 
 
-def _run_in_workdir(config, cmd_str, what):
+def _run_in_workdir(config, workdir, cmd_str, what):
     """Run a command in the working directory with the environment sourced."""
     old_workdir = os.getcwd()
-    os.chdir(config.workdir)
+    os.chdir(workdir)
     try:
         proc = subprocess.run(
             cmd_str, shell=True, capture_output=True, check=False
@@ -252,7 +260,7 @@ STDERR: {stderr}
         )
 
 
-def _convert(config):
+def _convert(config, workdir):
     """Convert the TS3-format input to a TS4 input file, as a subprocess.
 
     The conversion wraps Turbostream Ltd's own ``ts.process``/VTK stack, so it
@@ -263,6 +271,7 @@ def _convert(config):
     logger.info("Converting TS3 to TS4...")
     _run_in_workdir(
         config,
+        workdir,
         f". {config.environment_script} 2> /dev/null;"
         # Invoked via "python3 <script>" rather than executing the script
         # directly: a non-editable install (uv pip install, no -e) does not
@@ -277,15 +286,15 @@ def _convert(config):
         "TS3 to TS4 conversion",
     )
 
-    input_path = os.path.join(config.workdir, "input_ts4.hdf5")
+    input_path = os.path.join(workdir, "input_ts4.hdf5")
     if not os.path.exists(input_path):
         raise _io_ts4.TS4ConversionError(
             f"Conversion reported success but produced no {input_path}; see "
-            f"{os.path.join(config.workdir, 'convert.log')}."
+            f"{os.path.join(workdir, 'convert.log')}."
         )
 
 
-def _execute(config):
+def _execute(config, workdir):
     """Run TS4 itself, as a subprocess.
 
     Unlike TS3, the log is not polled during the run: TS4 detects NaN
@@ -297,7 +306,7 @@ def _execute(config):
     logger.info("Running TS4...")
 
     old_workdir = os.getcwd()
-    os.chdir(config.workdir)
+    os.chdir(workdir)
     try:
         cmd_str = (
             f". {config.environment_script} 2> /dev/null;"
@@ -338,10 +347,10 @@ Check that Turbostream is available and runnable on this node."""
         os.chdir(old_workdir)
 
 
-def _read_output(grid, config):
+def _read_output(grid, config, workdir):
     """Load the TS4 solution back into the grid."""
-    output_path = os.path.join(config.workdir, "output_ts4.hdf5")
-    output_avg_path = os.path.join(config.workdir, "output_ts4_avg.hdf5")
+    output_path = os.path.join(workdir, "output_ts4.hdf5")
+    output_avg_path = os.path.join(workdir, "output_ts4_avg.hdf5")
     if not os.path.exists(output_path):
         raise Exception(f"No Turbostream 4 output file found at: {output_path}")
 

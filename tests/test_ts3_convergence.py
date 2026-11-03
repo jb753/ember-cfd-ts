@@ -12,6 +12,7 @@ import pytest
 
 from ember.fluid import PerfectFluid
 from ember.plugins.ts import parse_ts3_log
+from ember.plugins.ts._convergence import _half_last_digit
 
 _DATA = Path(__file__).parent / "data"
 
@@ -128,3 +129,34 @@ def test_from_ts3_fluid_mismatch_raises():
     grid[0].set_fluid(PerfectFluid(cp=1100.0, gamma=1.4, mu=1.0e-3, Pr=0.72))
     with pytest.raises(ValueError, match="does not match grid"):
         parse_ts3_log(_DATA / "log_duct.txt", grid)
+
+
+@pytest.mark.parametrize(
+    "text, half",
+    [("0.000130", 5e-7), ("1005.000000", 5e-7), ("1.5e-05", 5e-7), ("1.50e-05", 5e-8), ("2", 0.5)],
+)
+def test_half_last_digit_is_the_printed_rounding(text, half):
+    assert _half_last_digit(text) == pytest.approx(half)
+
+
+def test_from_ts3_fluid_check_allows_for_printed_rounding(tmp_path):
+    """A small viscosity printed to fixed decimals keeps only a couple of
+    significant figures, and must not be mistaken for the wrong grid."""
+    log = (_DATA / "log_duct.txt").read_text()
+    printed = "viscosity:                  0.000130"
+    assert "viscosity:                  0.001000" in log
+    path = tmp_path / "log.txt"
+    path.write_text(log.replace("viscosity:                  0.001000", printed, 1))
+
+    grid = _make_duct_grid()
+    block = grid[0]
+    # Rounds to the printed 0.000130, but is 0.15% away from it
+    block.set_fluid(
+        PerfectFluid(
+            cp=float(block.cp.mean()),
+            gamma=float(block.gamma.mean()),
+            mu=0.000129813,
+            Pr=float(block.Pr.mean()),
+        )
+    )
+    parse_ts3_log(path, grid)

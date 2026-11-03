@@ -745,11 +745,9 @@ def test_run_end_to_end_via_mock_env(tmp_path, monkeypatch):
     env, convert = _write_mock_env(tmp_path)
     monkeypatch.setattr(ts4_mod, "_CONVERT_SCRIPT", str(convert))
 
-    cfg = TS4Solver(nstep=100, nstep_avg=20)
-    cfg.environment_script = env
-    cfg.workdir = tmp_path
+    cfg = TS4Solver(nstep=100, nstep_avg=20, environment_script=str(env))
 
-    hist = cfg.run(grid)
+    hist = cfg.run(grid, tmp_path)
 
     # Every stage left its artefact behind.
     assert (tmp_path / "input.hdf5").exists()
@@ -782,12 +780,10 @@ def test_run_diverged_raises(tmp_path, monkeypatch):
     env, convert = _write_mock_env(tmp_path, solver_mode="nan")
     monkeypatch.setattr(ts4_mod, "_CONVERT_SCRIPT", str(convert))
 
-    cfg = TS4Solver(nstep=100, nstep_avg=20)
-    cfg.environment_script = env
-    cfg.workdir = tmp_path
+    cfg = TS4Solver(nstep=100, nstep_avg=20, environment_script=str(env))
 
     with pytest.raises(DivergenceError, match="step 42"):
-        cfg.run(grid)
+        cfg.run(grid, tmp_path)
 
 
 def test_run_rejects_converter_that_merged_nodes(tmp_path, monkeypatch):
@@ -796,12 +792,10 @@ def test_run_rejects_converter_that_merged_nodes(tmp_path, monkeypatch):
     env, convert = _write_mock_env(tmp_path, convert_mode="merged")
     monkeypatch.setattr(ts4_mod, "_CONVERT_SCRIPT", str(convert))
 
-    cfg = TS4Solver(nstep=100, nstep_avg=20)
-    cfg.environment_script = env
-    cfg.workdir = tmp_path
+    cfg = TS4Solver(nstep=100, nstep_avg=20, environment_script=str(env))
 
     with pytest.raises(TS4ConversionError, match="one-for-one"):
-        cfg.run(grid)
+        cfg.run(grid, tmp_path)
 
 
 def test_run_requires_workdir():
@@ -816,11 +810,22 @@ def test_run_restores_cwd_on_failure(tmp_path, monkeypatch):
     env, convert = _write_mock_env(tmp_path, solver_mode="nan")
     monkeypatch.setattr(ts4_mod, "_CONVERT_SCRIPT", str(convert))
 
-    cfg = TS4Solver(nstep=100, nstep_avg=20)
-    cfg.environment_script = env
-    cfg.workdir = tmp_path
+    cfg = TS4Solver(nstep=100, nstep_avg=20, environment_script=str(env))
 
     cwd_before = os.getcwd()
     with pytest.raises(DivergenceError):
-        cfg.run(grid)
+        cfg.run(grid, tmp_path)
     assert os.getcwd() == cwd_before
+
+
+def test_soft_detunes_a_copy():
+    solver = TS4Solver()
+    soft = solver.soft()
+    assert soft is not solver and solver.cfl == 25.0
+    assert soft.cfl < solver.cfl and soft.kappa4 > solver.kappa4
+    assert soft.nstep == solver.nstep
+
+
+def test_soft_keeps_settings_already_more_robust():
+    soft = TS4Solver(cfl=2.0, kappa4=0.05).soft()
+    assert soft.cfl == 2.0 and soft.kappa4 == 0.05

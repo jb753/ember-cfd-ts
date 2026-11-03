@@ -9,7 +9,14 @@ import numpy as np
 import pytest
 from ember.grid import Grid
 from ember.block import Block
-from ember.patch import InletPatch, OutletPatch, PeriodicPatch
+from ember.patch import (
+    CuspPatch,
+    InletPatch,
+    InviscidPatch,
+    NonMatchPatch,
+    OutletPatch,
+    PeriodicPatch,
+)
 from ember.fluid import PerfectFluid
 from ember import util
 import ember.plugins.ts as ts3
@@ -486,6 +493,78 @@ def test_ts3_multiblock_with_patches_roundtrip(tmp_path):
     assert len(original_connectivity) == len(reconstructed_connectivity), (
         "Periodic connectivity not preserved"
     )
+
+
+def _block(x, nj, nk):
+    """Return a block spanning `x`, r from 0.8 to 1.2 and a pitch in theta,
+    with `nj` and `nk` nodes across them."""
+    xv, rv, tv = np.meshgrid(
+        x, np.linspace(0.8, 1.2, nj), np.linspace(0.0, PITCH, nk), indexing="ij"
+    )
+    block = Block(shape=xv.shape)
+    block.set_x(xv)
+    block.set_r(rv)
+    block.set_t(tv)
+    block.set_Nb(NBLADE)
+    return block
+
+
+def test_ts3_nonmatch_patches_roundtrip(tmp_path):
+    """Non-matching patches are written as TS3 kind 15, paired and oriented as
+    periodic ones are, and read back as NonMatchPatch."""
+    import h5py
+
+    # Two blocks meeting on one face with different counts across it
+    a = _block(np.linspace(0.0, 0.5, 5), 6, 8)
+    b = _block(np.linspace(0.5, 1.0, 4), 9, 5)
+    a.patches.append(NonMatchPatch(i=-1, label="joint"))
+    b.patches.append(NonMatchPatch(i=0, label="joint"))
+    grid = Grid([a, b])
+    assert len(grid.connectivity.nonmatch.pair()) == 2
+
+    path = tmp_path / "nonmatch.hdf5"
+    ts3.write_ts3(grid, str(path))
+
+    with h5py.File(path, "r") as f:
+        pa = [dict(f[f"block{bid}"]["patch0"].attrs) for bid in (0, 1)]
+    for bid, att in enumerate(pa):
+        assert att["kind"] == 15
+        assert (att["nxbid"], att["nxpid"]) == (1 - bid, 0)
+        # Constant in i, j and k aligned with the other block's
+        assert (att["idir"], att["jdir"], att["kdir"]) == (6, 1, 2)
+
+    back = ts3.read_ts3(str(path))
+    for block in back:
+        (patch,) = block.patches
+        assert isinstance(patch, NonMatchPatch)
+    assert len(back.connectivity.nonmatch.pair()) == 2
+
+
+def test_ts3_cusp_patches_are_written_as_slip_walls(tmp_path):
+    """TS3 has no cusp condition, so a cusp is written as an inviscid wall,
+    kind 7, over the same faces, and reads back as an InviscidPatch."""
+    import h5py
+
+    block = _block(np.linspace(0.0, 1.0, 9), 5, 6)
+    block.patches.extend(
+        [
+            CuspPatch(i=(4, 8), k=0, label="cusp_k0"),
+            CuspPatch(i=(4, 8), k=-1, label="cusp_nk"),
+        ]
+    )
+    path = tmp_path / "cusp.hdf5"
+    ts3.write_ts3(Grid([block]), str(path))
+
+    with h5py.File(path, "r") as f:
+        pa = [dict(f["block0"][f"patch{pid}"].attrs) for pid in (0, 1)]
+    for att, k in zip(pa, (0, 5)):
+        assert att["kind"] == 7
+        assert (att["ist"], att["ien"]) == (4, 9)
+        assert (att["kst"], att["ken"]) == (k, k + 1)
+
+    (back,) = ts3.read_ts3(str(path))
+    assert all(isinstance(patch, InviscidPatch) for patch in back.patches)
+    assert len(back.patches) == 2
 
 
 def test_ts3_write_preserves_block_variables(tmp_path):

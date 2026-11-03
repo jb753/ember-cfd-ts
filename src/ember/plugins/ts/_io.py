@@ -29,8 +29,10 @@ from ember.patch import (
     CoolingPatch,
     RotatingPatch,
     MixingPatch,
+    NonMatchPatch,
     ProbePatch,
     InviscidPatch,
+    CuspPatch,
 )
 from ember import yaml_util
 
@@ -47,7 +49,7 @@ PATCH_BY_KIND = {
     5: PeriodicPatch,
     7: InviscidPatch,
     8: ProbePatch,
-    # 15: NonMatchPatch,  # Not implemented in ember yet
+    15: NonMatchPatch,
     6: CoolingPatch,
 }
 # Map ember patch classes to the canonical TS3 kind integer used when writing.
@@ -59,9 +61,13 @@ KIND_BY_PATCH = {
     OutletPatch: 1,
     MixingPatch: 2,
     PeriodicPatch: 5,
+    NonMatchPatch: 15,
     CoolingPatch: 6,
     ProbePatch: 8,
     InviscidPatch: 7,
+    # TS3 has no cusp condition, so the cusp is a frictionless wall: a slip
+    # extension of the blade to the cusp tip. Read back as an InviscidPatch.
+    CuspPatch: 7,
 }
 
 # Patch attributes that must be present
@@ -781,25 +787,17 @@ def read_ts3(fname):
                         angle_def=1,
                     )
 
-            # Convert rpm block variables to RotatingPatch
-            if rpmi1 := b["rpmi1_bv"][0]:
-                patches.append(RotatingPatch(i=0))
-                patches[-1].set_rpm(rpmi1)
-            if rpmi2 := b["rpmi2_bv"][0]:
-                patches.append(RotatingPatch(i=-1))
-                patches[-1].set_rpm(rpmi2)
-            if rpmj1 := b["rpmj1_bv"][0]:
-                patches.append(RotatingPatch(j=0))
-                patches[-1].set_rpm(rpmj1)
-            if rpmj2 := b["rpmj2_bv"][0]:
-                patches.append(RotatingPatch(j=-1))
-                patches[-1].set_rpm(rpmj2)
-            if rpmk1 := b["rpmk1_bv"][0]:
-                patches.append(RotatingPatch(k=0))
-                patches[-1].set_rpm(rpmk1)
-            if rpmk2 := b["rpmk2_bv"][0]:
-                patches.append(RotatingPatch(k=-1))
-                patches[-1].set_rpm(rpmk2)
+            # Convert rpm block variables to RotatingPatch, where a face turns
+            # other than with its block, as the writer sets them
+            rpm_block = b["rpm_bv"][0]
+            for face, kw in (
+                ("i1", {"i": 0}), ("i2", {"i": -1}), ("j1", {"j": 0}),
+                ("j2", {"j": -1}), ("k1", {"k": 0}), ("k2", {"k": -1}),
+            ):
+                rpm_face = b[f"rpm{face}_bv"][0]
+                if rpm_face != rpm_block:
+                    patches.append(RotatingPatch(**kw))
+                    patches[-1].set_rpm(rpm_face)
 
             # Add patches to block
             block.patches.extend(patches)
@@ -1001,6 +999,15 @@ class TS3Writer:
                 rpm=block.rpm,
                 fracann=1.0 / float(block.Nb),
             )
+            # TS3 turns each wall at its face's own rpm, nought standing still,
+            # where ember turns a wall with its block unless a RotatingPatch
+            # says otherwise: every face at the block's speed, then the
+            # rotating patches' faces at theirs. Left at nought, a rotor's
+            # blades and hub would be stationary walls in a turning frame.
+            self.set_bv(
+                bid,
+                **{f"rpm{face}": block.rpm for face in ("i1", "i2", "j1", "j2", "k1", "k2")},
+            )
             # Set rotating patch rpms
             for patch in block.patches.rotating:
                 if patch.const_dim == 0:
@@ -1121,9 +1128,10 @@ class TS3Writer:
                 pa["ien"], pa["jen"], pa["ken"] = patch.ijk_lim_abs[:, 1] + 1
 
                 # Matching directions
-                # Set dummy values first, replace if periodic/mixing and connected
+                # Set dummy values first, replace if periodic, non-matching or
+                # mixing and connected
                 pa.update({"idir": 0, "jdir": 0, "kdir": 0, "nxbid": 0, "nxpid": 0})
-                if isinstance(patch, (PeriodicPatch, MixingPatch)):
+                if isinstance(patch, (PeriodicPatch, NonMatchPatch, MixingPatch)):
                     if (bid, pid) in conn:
                         ((nxbid, nxpid), _) = conn[bid, pid]
                         pa["nxbid"] = nxbid
@@ -1136,9 +1144,10 @@ class TS3Writer:
                                 f"{type(nxpatch).__name__} (patch {nxpid} on block "
                                 f"{nxbid}), not a MixingPatch"
                             )
-                        # Only periodic patches need matched index directions;
+                        # Periodic and non-matching patches need matched index
+                        # directions, TS3 kind 15 being written as kind 5 is;
                         # mixing planes are circumferentially averaged.
-                        if isinstance(patch, PeriodicPatch):
+                        if isinstance(patch, (PeriodicPatch, NonMatchPatch)):
                             (perm, flip) = conn[bid, pid][1]
                             pa["idir"], pa["jdir"], pa["kdir"] = _perm_flip_to_dirs(
                                 perm, flip, patch.const_dim
@@ -1161,14 +1170,25 @@ class TS3Writer:
                     # Note Turbostream uses 'PDI' control, not 'PID'. ember's
                     # controller is PI, so the derivative slot is written zero;
                     # mdot_target is None, not 0, on an unthrottled outlet.
+                    # TS3 throttles the whole annulus's outlet flow, its error
+                    # in kg/s and its correction in Pa, so ember's per-passage
+                    # target is scaled up by the blade count and its
+                    # dimensionless gains, on the fractional error in units of
+                    # P_ref, dimensionalised to Pa per kg/s. The integral is
+                    # not otherwise matched: TS3 sums it at its own cadence.
                     throttled = patch.mdot_target is not None
+                    if throttled:
+                        mdot_annulus = patch.mdot_target * patch.block.Nb
+                        k_scale = patch.block.fluid.P_ref / mdot_annulus
+                    else:
+                        mdot_annulus = k_scale = 0.0
                     pv.update(
                         ipout=3,
                         throttle_type=1 if throttled else 0,
-                        throttle_target=patch.mdot_target if throttled else 0.0,
-                        throttle_k0=patch.Kp,
+                        throttle_target=mdot_annulus,
+                        throttle_k0=patch.Kp * k_scale,
                         throttle_k1=0.0,
-                        throttle_k2=patch.Ki,
+                        throttle_k2=patch.Ki * k_scale,
                         fthrottle=0.0,
                         # As the inlet above, the prescription survives as a
                         # nondimensional target row, not as the Pa it was given.

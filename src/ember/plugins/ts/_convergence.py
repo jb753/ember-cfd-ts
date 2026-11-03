@@ -23,6 +23,31 @@ from ember.convergence_history import ConvergenceHistory
 from ember.grid import ConvergenceStep
 
 
+# Printed after the flows when the outlet is throttled: target and current
+# annulus outlet flow [kg/s], each term's gain [Pa per kg/s] and error [kg/s],
+# and the total correction [Pa] to the outlet's prescribed pressure.
+_num = r"\s+([\d.Ee+\-]+)"
+THROTTLE_RE = re.compile(
+    r"THROTTLE BOUNDARY CONDITION:\s*"
+    r"TARGET =" + _num + r"\s+CURRENT =" + _num + r"\s*"
+    r"PROPORTIONAL CONTROL: CONSTANT =" + _num + r"\s+ERROR =" + _num + r"\s*"
+    r"DERIVATIVE CONTROL\s*: CONSTANT =" + _num + r"\s+ERROR =" + _num + r"\s*"
+    r"INTEGRAL CONTROL\s*: CONSTANT =" + _num + r"\s+ERROR =" + _num + r"\s*"
+    r"RESULTING PRESSURE CORRECTION =" + _num
+)
+
+
+def _half_last_digit(text):
+    """Return half a unit in the last digit of a printed number.
+
+    The rounding a value read back from `text` can carry: ``0.000130`` is
+    good to 5e-7, ``1.50e-05`` to 5e-8.
+    """
+    mantissa, _, exponent = text.lower().partition("e")
+    _, _, decimals = mantissa.partition(".")
+    return 0.5 * 10.0 ** (int(exponent or 0) - len(decimals))
+
+
 def parse_ts3_log(filename, grid):
     """Reconstruct a ConvergenceHistory from a TS3 text log file.
 
@@ -57,10 +82,14 @@ def parse_ts3_log(filename, grid):
         raise ValueError("Could not find APPLICATION VARIABLES header in log")
     header_text = header_match.group(1)
 
+    # Half a unit in the last digit each value was printed to, by name
+    printed = {}
+
     def _get_var(name, txt):
         m = re.search(r"^\s+" + name + r":\s+([\d.Ee+-]+)", txt, re.MULTILINE)
         if m is None:
             raise ValueError(f"Could not find '{name}' in header")
+        printed[name] = _half_last_digit(m.group(1))
         return float(m.group(1))
 
     cp = _get_var("cp", header_text)
@@ -85,7 +114,9 @@ def parse_ts3_log(filename, grid):
         ("prandtl", Pr, outlet_block.Pr),
     ):
         grid_val = float(np.mean(grid_val))
-        if not np.isclose(log_val, grid_val, rtol=1e-3):
+        # The log prints to fixed decimals, so a small viscosity keeps only a
+        # couple of significant figures: allow for that rounding as well.
+        if not np.isclose(log_val, grid_val, rtol=1e-3, atol=printed[name]):
             raise ValueError(
                 f"TS3 log {name}={log_val:g} does not match grid "
                 f"{name}={grid_val:g}; wrong grid for this log?"
@@ -128,8 +159,29 @@ def parse_ts3_log(filename, grid):
         if not all([i_step_m, davg_m, flows_m, stagP_m, stagT_m]):
             continue  # skip incomplete blocks
 
+        throttle_m = THROTTLE_RE.search(chunk)
+        if throttle_m:
+            target, current, kP, eP, kD, eD, kI, eI, dP = map(
+                float, throttle_m.groups()
+            )
+            throttle = {
+                "mdot_target": target,
+                "mdot_throttle": current,
+                "dP_throttle": dP,
+                "dP_P": kP * eP,
+                "dP_I": kI * eI,
+                "dP_D": kD * eD,
+            }
+        else:
+            # TS3 prints no throttle block after its final step's flows, so
+            # that row holds the last one printed, as an unthrottled log has
+            # none to hold.
+            throttle = step_blocks[-1].get("throttle", {}) if step_blocks else {}
+
         step_blocks.append(
             {
+                "throttle": throttle,
+                **throttle,
                 "i_step": int(i_step_m.group(1)),
                 "davg": float(davg_m.group(1)),
                 "mdot_in": float(flows_m.group(1)),
@@ -155,6 +207,9 @@ def parse_ts3_log(filename, grid):
     # live grid path (Grid._station_stats); ho/s from get_h/get_s on nd
     # inputs are already non-dimensional.
     mdot_ref = fluid.rhoV_ref * grid[0].L_ref ** 2
+    # The throttle monitors are per passage, as ember's own are, where TS3's
+    # are the annulus's.
+    Nb = float(outlet_block.Nb)
 
     for i, blk in enumerate(step_blocks):
         mdot = np.full(n_st, np.nan)
@@ -169,19 +224,19 @@ def parse_ts3_log(filename, grid):
             s[st] = fluid.get_s(rho_nd, u_nd)
             mdot[st] = blk[f"mdot_{side}"] / mdot_ref
 
-        # DAVG → drho; the other four residuals and all throttle state are
-        # absent from the log, so leave them NaN.
+        # DAVG → drho; the other four residuals are absent from the log, so
+        # leave them NaN, as is the throttle state of an unthrottled outlet.
         conv = ConvergenceStep(
             residual=np.array([blk["davg"], np.nan, np.nan, np.nan, np.nan]),
             mdot=mdot,
             ho=ho,
             s=s,
-            mdot_target=np.nan,
-            mdot_throttle=np.nan,
-            P_throttle=np.nan,
-            dP_P=np.nan,
-            dP_I=np.nan,
-            dP_D=np.nan,
+            mdot_target=blk.get("mdot_target", np.nan) / Nb,
+            mdot_throttle=blk.get("mdot_throttle", np.nan) / Nb,
+            dP_throttle=blk.get("dP_throttle", np.nan),
+            dP_P=blk.get("dP_P", np.nan),
+            dP_I=blk.get("dP_I", np.nan),
+            dP_D=blk.get("dP_D", np.nan),
         )
         out.record_convergence(blk["i_step"], conv, time=i * mean_dt)
 
