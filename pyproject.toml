@@ -17,10 +17,10 @@ classifiers = [
 requires-python = ">=3.12"
 dependencies = [
     # Exact pin, as turbigen pins it: until 1.0.0 a minor release may break
-    # the public API. 0.4.6 carries everything this plugin uses -- the
+    # the public API. 0.4.7 carries everything this plugin uses -- the
     # dP_throttle convergence field, NonMatchPatch and CuspPatch, and
     # BaseSolver.soft/restart with run(grid, workdir).
-    "ember-cfd==0.4.6",
+    "ember-cfd==0.4.7",
     "h5py~=3.16.0",
     "numpy~=2.5.0",
     "pyyaml~=6.0.3",
