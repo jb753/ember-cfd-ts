@@ -9,6 +9,7 @@ import signal
 import sys
 import re
 
+from ember.convergence_history import ConvergenceHistory
 from ember.grid import DivergenceError
 from ember.solver import BaseSolver
 from ember.plugins.ts._io import TS3Writer, read_conserved, read_mu_turb
@@ -145,11 +146,9 @@ class TS3Solver(BaseSolver):
         not be parsed). ``workdir`` is the directory this run writes its input,
         output and log in, made if it does not exist; it must be given.
 
-        Raises
-        ------
-        DivergenceError
-            If the solver diverged (NaN in the log, or a non-physical solution
-            on read-back).
+        If the solver diverged (NaN in the log, or a non-physical solution on
+        read-back) nothing is raised: the history comes back with ``diverged``
+        set, as for the native solver, and ``grid`` is left as it was.
         """
         if workdir is None:
             raise ValueError("TS3Solver.run() needs a workdir to run in.")
@@ -161,7 +160,14 @@ class TS3Solver(BaseSolver):
         archive_log(workdir)
         log_path = os.path.join(workdir, "log.txt")
 
-        _run(grid, self, workdir)
+        # A diverged march is reported as the native solver reports it: logged,
+        # and handed back as a history whose `diverged` is set, with the grid
+        # left as it was since TS3's invalid field is not read in.
+        try:
+            _run(grid, self, workdir)
+        except DivergenceError as err:
+            logger.error("Solver diverged: %s", err)
+            return _diverged_history(log_path, grid)
         _read_throttle(grid, log_path)
 
         # Build the convergence history from the log. The reference scales
@@ -173,6 +179,22 @@ class TS3Solver(BaseSolver):
             logger.warning(f"Failed to parse log file {log_path}")
             logger.warning(f"Exception: {e}")
             return None
+
+
+def _diverged_history(log_path, grid):
+    """Return the history of a march that diverged, marked as such.
+
+    The log up to the divergence where it can be parsed, otherwise an empty
+    history, as the native solver returns when the first step is already bad.
+    """
+    try:
+        history = parse_ts3_log(log_path, grid)
+    except Exception as e:
+        logger.warning(f"Failed to parse log file {log_path} of the diverged run")
+        logger.warning(f"Exception: {e}")
+        history = ConvergenceHistory.from_grid(1, grid)
+    history.diverged = True
+    return history
 
 
 # How long to wait for the solver to create its log file before giving up, and

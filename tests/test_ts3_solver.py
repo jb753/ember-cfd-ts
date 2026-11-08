@@ -365,6 +365,35 @@ def test_run_diverged_solution_raises(tmp_path):
     assert os.getcwd() == cwd_before
 
 
+def test_solver_run_nan_returns_diverged_history(tmp_path, monkeypatch):
+    """A NAN in the log mid-run comes back as a diverged history, not a raise.
+
+    As the native solver does: the march is reported through the history's
+    ``diverged`` flag, and the grid is left as it was, TS3's output not read.
+    """
+    monkeypatch.setattr(ts3_mod, "_POLL_INTERVAL_S", 0.02)
+
+    grid = _make_grid_with_inlet()
+    P = grid[0].P.copy()
+    cfg = TS3Solver(environment_script=str(_write_mock_env(tmp_path, "nan")))
+
+    cwd_before = os.getcwd()
+    history = cfg.run(grid, tmp_path)
+
+    assert history.diverged
+    np.testing.assert_array_equal(grid[0].P, P)
+    assert os.getcwd() == cwd_before
+
+
+def test_solver_run_diverged_solution_returns_diverged_history(tmp_path):
+    """A clean exit with a non-physical output also comes back as diverged."""
+    cfg = TS3Solver(environment_script=str(_write_mock_env(tmp_path, "diverged")))
+
+    history = cfg.run(_make_grid_with_inlet(), tmp_path)
+
+    assert history.diverged
+
+
 def test_archive_log_increments_suffix(tmp_path):
     """archive_log renames log.txt to the next free log_NNN.txt, keeping all."""
     log = tmp_path / "log.txt"
