@@ -20,7 +20,7 @@ dependencies = [
     # the public API. 0.4.8 carries everything this plugin uses -- the
     # dP_throttle convergence field, NonMatchPatch and CuspPatch, and
     # BaseSolver.soft/restart with run(grid, workdir).
-    "ember-cfd==0.4.8",
+    "ember-cfd==0.4.9",
     "h5py~=3.16.0",
     "numpy~=2.5.0",
     "pyyaml~=6.0.3",
