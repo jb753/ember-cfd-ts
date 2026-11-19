@@ -13,24 +13,24 @@ wheels = [
 
 [[package]]
 name = "ember-cfd"
-version = "0.4.8"
+version = "0.4.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "pykdtree" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/31/13/46a40fa465db6a365cc4f2b03a9b723b19181eaa01248ec7a48c9b89bf83/ember_cfd-0.4.8.tar.gz", hash = "sha256:c0b3e8f7f807d7eb691fea22bbf508311152e16f1785089674bd3c96be25ae9d", size = 3455999 }
+sdist = { url = "https://files.pythonhosted.org/packages/a3/b6/1e5326412c1449b29d1cb8bc7ecc6db4d92bbd749cbfe7e4ac8b61f2ab12/ember_cfd-0.4.10.tar.gz", hash = "sha256:fa19c6fef97fd27814dc6e7909132c875e0fcb3181877475ba8d5542c60b1572", size = 3464243 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/79/c2/a9fd3887083bc1f8dc0b4289ca13be4ca1354f25eac20b7b0d14dad64be0/ember_cfd-0.4.8-cp312-cp312-macosx_26_0_arm64.whl", hash = "sha256:456709aaeee4d5802ecb4e92777b1f90b5fb50d0453a8ca56816db4610afe7ec", size = 2556066 },
-    { url = "https://files.pythonhosted.org/packages/0b/81/dc3706d9faa7513e1ee2342b9aff6fe410437882db07ca22e75a1bd20046/ember_cfd-0.4.8-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:101dab1acfd87c6407aab4a703561b716b46bec1946c985effbd2c1141925a6d", size = 2253026 },
-    { url = "https://files.pythonhosted.org/packages/85/5f/2b27076aa76dd3546217f39f648d4d8654c89c9f86998af236d9b7915252/ember_cfd-0.4.8-cp312-cp312-win_amd64.whl", hash = "sha256:a00dc816ed2258cd955d4d6e04f40fafcc90066af151d6a21109aae8baaef9eb", size = 2693745 },
-    { url = "https://files.pythonhosted.org/packages/91/29/a473e37c2beb3a4eb9355dbe259f3cd90147ceda24fe47be93073709151c/ember_cfd-0.4.8-cp313-cp313-macosx_26_0_arm64.whl", hash = "sha256:904a451a1caf2e4b2137ad0743714eca662989ae5eca930bee84d2fde9f1de21", size = 2556348 },
-    { url = "https://files.pythonhosted.org/packages/fc/1e/e2245781ec1ceba24acb6303cf9b1aa9a35c55b97c8d8285ec621c7b87dc/ember_cfd-0.4.8-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7a71de00571cb122359aa5ecbfeef040597e4ce73c79ac299b4fe0e57d01a3d0", size = 2253318 },
-    { url = "https://files.pythonhosted.org/packages/49/c6/b14446e52448ae4ea6510ac44160cd9afdcf22a04fd14f2f9c53738609be/ember_cfd-0.4.8-cp313-cp313-win_amd64.whl", hash = "sha256:ad069152f2005aa3c1734fe4df77ecdfbb4319bbe4dc23cef51788db2d965de7", size = 2694000 },
-    { url = "https://files.pythonhosted.org/packages/a7/0d/5552e99664ff699d5b1b293059750886ce1b86024e806d6dca78d01f9be4/ember_cfd-0.4.8-cp314-cp314-macosx_26_0_arm64.whl", hash = "sha256:90cf8a991b49111511c8ff4b2654cdbfcee7a4feb4d7e2a19b073cc1dab0be30", size = 2556423 },
-    { url = "https://files.pythonhosted.org/packages/a1/cb/62be9975afcd1eff4379fd5da4233cc817d248dbf1a41496689bda4852ee/ember_cfd-0.4.8-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:a324fcca436abf42193a60d18d34533e46a8ac93f62e4d9ba1638906244f7ffd", size = 2253068 },
-    { url = "https://files.pythonhosted.org/packages/f8/b2/260a2473d0b4efc67d66d8f5b32781f479124ab5b5cb59ff1f21a8081186/ember_cfd-0.4.8-cp314-cp314-win_amd64.whl", hash = "sha256:863672d13bc20b933315d38d5a2dc8d091691a54c0516eef86a4b322ea3db631", size = 2748507 },
+    { url = "https://files.pythonhosted.org/packages/a7/f3/cb4cdf59610d2dc3cff0be500a18ff6619ba7d0a0645925a0029baac87d4/ember_cfd-0.4.10-cp312-cp312-macosx_26_0_arm64.whl", hash = "sha256:41827a713779cb11e171dd7af55ca8f2d4d06d579ca5333f5b23b351f68eaa9f", size = 2598577 },
+    { url = "https://files.pythonhosted.org/packages/aa/38/dcba64b430ac8bf558dcc573d5e0450f75691568b56916b20e906ed58457/ember_cfd-0.4.10-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:16401c0944d477e9a1d85d473b3dfd0da3b2b56e2caabdb62831b06e59b93f27", size = 2302246 },
+    { url = "https://files.pythonhosted.org/packages/11/c7/5499eba7d35266225a25a0d528f8d6081e5d7e0a7b45b79c2309403a3abd/ember_cfd-0.4.10-cp312-cp312-win_amd64.whl", hash = "sha256:a61a93e89f0bc5a57463613af09a225df273a07385aae467f7e6ce8ff49b72d2", size = 2727433 },
+    { url = "https://files.pythonhosted.org/packages/f7/8f/16f90d7d5ad89ec3952a29cafd676252160cf3c30825f420ee5c1fa22e7b/ember_cfd-0.4.10-cp313-cp313-macosx_26_0_arm64.whl", hash = "sha256:564e2af27930f8562e99487a39b92ddc1ea02f75e3e5a4ff1297c17efbf239e9", size = 2598971 },
+    { url = "https://files.pythonhosted.org/packages/48/e2/7cd031093653b755fc2c8fce65010275dab899a720fdba5d9c7e2dd58f7a/ember_cfd-0.4.10-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2352eca6bd4a6ae39bc82ef1ec42622f2fed92dba92928b1631189b1375f4853", size = 2302419 },
+    { url = "https://files.pythonhosted.org/packages/7a/ac/3a51dfa42beecfe57498b7315511f9752a2e676afb71a512b33780aa0964/ember_cfd-0.4.10-cp313-cp313-win_amd64.whl", hash = "sha256:2bdc34ac5224e39125782575a47fff8399531748176330c50e7d8edea1cd899d", size = 2727667 },
+    { url = "https://files.pythonhosted.org/packages/da/9f/7271981f27b50facf2f2d5e40d133d51afa1d07640c0f32db6189e127297/ember_cfd-0.4.10-cp314-cp314-macosx_26_0_arm64.whl", hash = "sha256:d1295cd82258c5019f928c708b7e06ab3985b281e1b4a25366367a8755f700e7", size = 2598951 },
+    { url = "https://files.pythonhosted.org/packages/4f/7e/999b13842c9eb91c7be963c4ed6ead0953e4c85f024e5fff7f1d15de1869/ember_cfd-0.4.10-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5547f7fb7596660e3e53f3973c782edab3850ad02147605fe6653541bfd428b6", size = 2302274 },
+    { url = "https://files.pythonhosted.org/packages/70/17/343257a4bb782ad2c9de26a92755d93cbacc1a29cd47f72fd2bbdfe74862/ember_cfd-0.4.10-cp314-cp314-win_amd64.whl", hash = "sha256:a4041d10c2b624d642059dc2c4837440fc0ac04657899fadd21db637b77ca182", size = 2784492 },
 ]
 
 [[package]]
@@ -51,7 +51,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ember-cfd", specifier = "==0.4.8" },
+    { name = "ember-cfd", specifier = "==0.4.10" },
     { name = "h5py", specifier = "~=3.16.0" },
     { name = "numpy", specifier = "~=2.5.0" },
     { name = "pyyaml", specifier = "~=6.0.3" },
