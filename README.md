@@ -19,7 +19,7 @@ pip install git+https://github.com/jb753/ember-cfd-ts
 ```
 
 This also installs the core [`ember-cfd`](https://pypi.org/project/ember-cfd/)
-package from PyPI, pinned to the exact version the plugin is tested against.
+package from PyPI, at any 0.4.x release from 0.4.8 on.
 
 ## Usage
 

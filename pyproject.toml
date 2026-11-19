@@ -16,11 +16,13 @@ classifiers = [
 # Follows SPEC 0's Python support window: https://scientific-python.org/specs/spec-0000/
 requires-python = ">=3.12"
 dependencies = [
-    # Exact pin, as turbigen pins it: until 1.0.0 a minor release may break
-    # the public API. 0.4.8 carries everything this plugin uses -- the
-    # dP_throttle convergence field, NonMatchPatch and CuspPatch, and
-    # BaseSolver.soft/restart with run(grid, workdir).
-    "ember-cfd==0.4.10",
+    # Capped below the next minor: until 1.0.0 a minor release may break the
+    # public API, but patch releases do not. 0.4.8 is the floor, the first to
+    # carry everything this plugin uses -- the dP_throttle convergence field,
+    # NonMatchPatch and CuspPatch, and BaseSolver.soft/restart with
+    # run(grid, workdir). A range, not a pin, so an exact pin downstream (as
+    # turbigen's) picks the version; uv.lock records the one tested against.
+    "ember-cfd~=0.4.8",
     "h5py~=3.16.0",
     "numpy~=2.5.0",
     "pyyaml~=6.0.3",
