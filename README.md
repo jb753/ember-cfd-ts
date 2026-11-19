@@ -15,9 +15,11 @@ file with Turbostream Ltd's own tooling, which is run from that installation.
 ## Install
 
 ```bash
-pip install ember-cfd        # core (required)
-pip install ember-cfd-ts     # this plugin
+pip install git+https://github.com/jb753/ember-cfd-ts
 ```
+
+This also installs the core [`ember-cfd`](https://pypi.org/project/ember-cfd/)
+package from PyPI, pinned to the exact version the plugin is tested against.
 
 ## Usage
 
