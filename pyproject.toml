@@ -26,7 +26,8 @@ dependencies = [
     "h5py~=3.16.0",
     "numpy~=2.5.0",
     "pyyaml~=6.0.3",
-    "scipy",
+    # Floor per SPEC 0, as for Python above; only scipy.spatial.KDTree is used.
+    "scipy>=1.15",
 ]
 
 [project.urls]

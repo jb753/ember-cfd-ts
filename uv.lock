@@ -55,7 +55,7 @@ requires-dist = [
     { name = "h5py", specifier = "~=3.16.0" },
     { name = "numpy", specifier = "~=2.5.0" },
     { name = "pyyaml", specifier = "~=6.0.3" },
-    { name = "scipy" },
+    { name = "scipy", specifier = ">=1.15" },
 ]
 
 [package.metadata.requires-dev]
