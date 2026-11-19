@@ -56,10 +56,8 @@ class TS4Solver(BaseSolver):
     an initial guess.
     """
 
-    environment_script: str = (
-        "/usr/local/software/turbostream/ts42111/bashrc_module_ts42111_a100"
-    )
-    """Setup environment shell script to be sourced before running."""
+    environment_script: str = ""
+    """Setup environment shell script to be sourced before running; must be set to run."""
 
     cfl: float = 25.0
     """Courant--Friedrichs--Lewy number setting the time step."""

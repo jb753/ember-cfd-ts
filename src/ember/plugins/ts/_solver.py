@@ -58,10 +58,8 @@ class TS3Solver(BaseSolver):
     solver, and read the solution back into the grid in place.
     """
 
-    environment_script: str = (
-        "/usr/local/software/turbostream/ts3610_a100/bashrc_module_ts3610_a100"
-    )
-    """Setup environment shell script to be sourced before running."""
+    environment_script: str = ""
+    """Setup environment shell script to be sourced before running; must be set to run."""
 
     cfl: float = 0.4
     """Courant--Friedrichs--Lewy number, reduce for more stability."""

@@ -1,7 +1,7 @@
 [project]
 name = "ember-cfd-ts"
 dynamic = ["version"]
-description = "Turbostream 3 (TS3) file-format plugin for EMBER CFD"
+description = "Turbostream 3 and 4 (TS3, TS4) plugin for EMBER CFD"
 readme = "README.md"
 authors = [
     { name = "James Brind", email = "jb753@cam.ac.uk" }
